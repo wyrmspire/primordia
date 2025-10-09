@@ -1,9 +1,13 @@
 import fs from "fs";
 import path from "path";
+import os from "os"; // Import the 'os' module
 import { Firestore } from "@google-cloud/firestore";
-import { CACHE_DIR, CACHE_COLLECTION, PROJECT_ID } from "./utils.js";
+import { CACHE_COLLECTION, PROJECT_ID } from "./utils.js";
 
 const db = new Firestore({ projectId: PROJECT_ID });
+
+// Use the OS-provided temporary directory, which is writable in Cloud Run
+const CACHE_DIR = path.join(os.tmpdir(), "primordia-cache");
 
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 
