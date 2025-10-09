@@ -5,106 +5,60 @@ import { logTask, updateTask, getTask } from "./tasks.js";
 import { cache } from "./cache.js";
 import { scaffoldFunction, scaffoldRun } from "./scaffold.js";
 import { deploy } from "./deploy.js";
-import { getBuildLogs } from "./logs.js"; // <-- IMPORT THE NEW FUNCTION
+import { getBuildLogs } from "./logs.js";
+// --- IMPORT NEW FIRESTORE FUNCTIONS ---
+import { getDocument, listCollection, setDocument, deleteDocument } from "./firestore.js";
 
-// A simple async wrapper to catch errors and pass them to our error handler
 const asyncHandler = (fn) => (req, res, next) =>
   Promise.resolve(fn(req, res, next)).catch(next);
 
 const app = express();
 app.use(express.json());
 
-// Init cache and health check
 app.get(["/", "/healthz"], (_, res) => res.send("🚀 Primordia Bridge OK"));
-(async () => {
-  try {
-    await cache.set("init", { time: new Date().toISOString(), ok: true });
-  } catch (err) {
-    log("ERROR: Cache initialization failed.", err.message);
-  }
-})();
 
-
-// --- API ROUTES ---
-
-// File Management
-app.get("/files", asyncHandler(async (_, res) => {
-  const files = await listAllFiles();
-  res.json({ files });
-}));
-
+// --- FILE MANAGEMENT ---
+app.get("/files", asyncHandler(async (_, res) => res.json({ files: await listAllFiles() })));
 app.get("/file", asyncHandler(async (req, res) => {
-  const p = req.query.path;
-  if (!isSafePath(p)) return res.status(400).send("Invalid path");
-  const txt = await readFileText(p);
-  res.type("text/plain").send(txt);
+  if (!isSafePath(req.query.path)) return res.status(400).send("Invalid path");
+  res.type("text/plain").send(await readFileText(req.query.path));
 }));
-
 app.post("/file", asyncHandler(async (req, res) => {
   const { path: p, content } = req.body;
-  if (!isSafePath(p) || typeof content !== 'string') {
-    return res.status(400).json({ error: "Invalid path or missing content" });
-  }
+  if (!isSafePath(p) || typeof content !== 'string') return res.status(400).json({ error: "Invalid path or missing content" });
   await writeFileText(p, content);
   res.json({ success: true, message: `Wrote ${content.length} bytes to ${p}` });
 }));
 
-// Scaffolding
-app.post("/scaffold/function", asyncHandler(async (req, res) => {
-  const result = await scaffoldFunction(req.body);
-  res.json(result);
-}));
+// --- SCAFFOLDING ---
+app.post("/scaffold/function", asyncHandler(async (req, res) => res.json(await scaffoldFunction(req.body))));
+app.post("/scaffold/run", asyncHandler(async (req, res) => res.json(await scaffoldRun(req.body))));
 
-app.post("/scaffold/run", asyncHandler(async (req, res) => {
-  const result = await scaffoldRun(req.body);
-  res.json(result);
-}));
-
-// Deployment
-app.post("/deploy", asyncHandler(async (req, res) => {
-  const result = await deploy(req.body);
-  res.json(result);
-}));
-
-// --- NEW LOGS ENDPOINT ---
+// --- DEPLOYMENT & LOGS ---
+app.post("/deploy", asyncHandler(async (req, res) => res.json(await deploy(req.body))));
 app.get("/logs", asyncHandler(async (req, res) => {
-  const { buildId } = req.query;
-  if (!buildId) {
-    return res.status(400).json({ error: "Missing buildId query parameter" });
-  }
-  const logs = await getBuildLogs({ buildId });
-  res.json({ buildId, logs });
-}));
-// -------------------------
-
-// Invocation (Functions only)
-app.post("/invoke", asyncHandler(async (req, res) => {
-  const { function: fnName, payload } = req.body;
-  if (!fnName) throw new Error("Missing function name");
-  const url = `https://${REGION}-${PROJECT_ID}.cloudfunctions.net/${fnName}`;
-  const response = await fetchFn(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload || {}),
-  });
-  const result = await response.json();
-  res.json(result);
+  if (!req.query.buildId) return res.status(400).json({ error: "Missing buildId query parameter" });
+  res.json({ buildId: req.query.buildId, logs: await getBuildLogs(req.query) });
 }));
 
-// Task Lookup
-app.get("/task", asyncHandler(async (req, res) => {
-  const { id } = req.query;
-  if (!id) return res.status(400).json({ error: "Missing id" });
-  const doc = await getTask(id);
-  if (!doc) return res.status(404).json({ error: "Task not found" });
-  res.json(doc);
+// --- SANDBOXED FIRESTORE MANAGEMENT ---
+app.get("/firestore/document", asyncHandler(async (req, res) => {
+  res.json(await getDocument(req.query.path));
+}));
+app.get("/firestore/collection", asyncHandler(async (req, res) => {
+  res.json(await listCollection(req.query.path));
+}));
+app.post("/firestore/document", asyncHandler(async (req, res) => {
+  res.json(await setDocument(req.body.path, req.body.data));
+}));
+app.delete("/firestore/document", asyncHandler(async (req, res) => {
+  res.json(await deleteDocument(req.query.path));
 }));
 
 // --- Centralized Error Handler ---
 app.use(async (err, req, res, next) => {
-  const errorMsg = err.message || "An unexpected error occurred.";
-  log("ERROR:", errorMsg);
-  res.status(500).json({ error: errorMsg });
+  log("ERROR:", err.message);
+  res.status(500).json({ error: err.message || "An unexpected error occurred." });
 });
 
 const PORT = process.env.PORT || 8080;

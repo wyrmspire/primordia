@@ -1,7 +1,8 @@
 import { Firestore } from "@google-cloud/firestore";
 import { PROJECT_ID, TASKS_COLLECTION } from "./utils.js";
 
-const db = new Firestore({ projectId: PROJECT_ID });
+// Export the db client so other modules can use it
+export const db = new Firestore({ projectId: PROJECT_ID });
 
 export async function logTask(type, data) {
   const doc = await db.collection(TASKS_COLLECTION).add({
