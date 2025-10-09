@@ -1,13 +1,33 @@
 steps:
-  # 1. Build the container image
+  # 1. Restore node_modules from cache if it exists
+  - name: "gcr.io/cloud-builders/gsutil"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - "gsutil cp gs://${_PROJECT_ID}-build-cache/node_modules.tar.gz node_modules.tar.gz && tar -xzf node_modules.tar.gz || echo 'Cache not found, running fresh install.'"
+
+  # 2. Install dependencies (this will be fast if cache was restored)
+  - name: "gcr.io/cloud-builders/npm"
+    args: ["install", "--only=production"]
+
+  # 3. Save the updated node_modules to the cache for the next build
+  - name: "gcr.io/cloud-builders/npm"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - "tar -czf node_modules.tar.gz node_modules"
+  - name: "gcr.io/cloud-builders/gsutil"
+    args: ["cp", "node_modules.tar.gz", "gs://${_PROJECT_ID}-build-cache/node_modules.tar.gz"]
+
+  # 4. Build the container image (using the now-existing node_modules)
   - name: "gcr.io/cloud-builders/docker"
     args: ["build", "-t", "gcr.io/$PROJECT_ID/primordia:$BUILD_ID", "."]
 
-  # 2. Push it to Container Registry
+  # 5. Push the container image to the registry
   - name: "gcr.io/cloud-builders/docker"
     args: ["push", "gcr.io/$PROJECT_ID/primordia:$BUILD_ID"]
 
-  # 3. Deploy it to Cloud Run
+  # 6. Deploy the container to Cloud Run
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
     entrypoint: gcloud
     args:
@@ -18,7 +38,6 @@ steps:
       - "--region=${_REGION}"
       - "--platform=managed"
       - "--allow-unauthenticated"
-      # THIS IS THE CRITICAL NEW LINE
       - "--service-account=primordia-sa@${_PROJECT_ID}.iam.gserviceaccount.com"
       - "--set-env-vars=PROJECT_ID=${_PROJECT_ID},REGION=${_REGION},WORKSPACE_BUCKET=${_WORKSPACE_BUCKET},CACHE_COLLECTION=${_CACHE_COLLECTION},TASKS_COLLECTION=${_TASKS_COLLECTION}"
 

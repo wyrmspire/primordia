@@ -5,6 +5,7 @@ import { logTask, updateTask, getTask } from "./tasks.js";
 import { cache } from "./cache.js";
 import { scaffoldFunction, scaffoldRun } from "./scaffold.js";
 import { deploy } from "./deploy.js";
+import { getBuildLogs } from "./logs.js"; // <-- IMPORT THE NEW FUNCTION
 
 // A simple async wrapper to catch errors and pass them to our error handler
 const asyncHandler = (fn) => (req, res, next) =>
@@ -65,6 +66,17 @@ app.post("/deploy", asyncHandler(async (req, res) => {
   res.json(result);
 }));
 
+// --- NEW LOGS ENDPOINT ---
+app.get("/logs", asyncHandler(async (req, res) => {
+  const { buildId } = req.query;
+  if (!buildId) {
+    return res.status(400).json({ error: "Missing buildId query parameter" });
+  }
+  const logs = await getBuildLogs({ buildId });
+  res.json({ buildId, logs });
+}));
+// -------------------------
+
 // Invocation (Functions only)
 app.post("/invoke", asyncHandler(async (req, res) => {
   const { function: fnName, payload } = req.body;
@@ -89,17 +101,9 @@ app.get("/task", asyncHandler(async (req, res) => {
 }));
 
 // --- Centralized Error Handler ---
-// This middleware will run if any of the asyncHandler functions throw an error.
 app.use(async (err, req, res, next) => {
   const errorMsg = err.message || "An unexpected error occurred.";
   log("ERROR:", errorMsg);
-  // We can still try to log the task failure to Firestore
-  try {
-    // This assumes we can get a taskId from somewhere, for now, we just log the error.
-    // In a more advanced setup, we'd create the task log at the start of each request.
-  } catch (logErr) {
-    log("FATAL: Could not log error to Firestore.", logErr.message);
-  }
   res.status(500).json({ error: errorMsg });
 });
 

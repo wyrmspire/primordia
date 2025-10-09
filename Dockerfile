@@ -4,13 +4,8 @@ FROM node:20-slim
 # Set the working directory in the container to /app
 WORKDIR /app
 
-# Copy package.json and package-lock.json first to leverage Docker layer caching
-COPY package*.json ./
-
-# Install app dependencies, but only for production
-RUN npm install --only=production
-
-# Copy the rest of the application's source code from your primordia directory to /app in the container
+# Copy all files from the build context, including the pre-installed node_modules
+# This assumes `npm install` was run in the build step before this Dockerfile is used.
 COPY . .
 
 # Your app binds to port 8080, so expose it
