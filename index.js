@@ -6,7 +6,6 @@ import { cache } from "./cache.js";
 import { scaffoldFunction, scaffoldRun } from "./scaffold.js";
 import { deploy } from "./deploy.js";
 import { getBuildLogs } from "./logs.js";
-// --- IMPORT NEW FIRESTORE FUNCTIONS ---
 import { getDocument, listCollection, setDocument, deleteDocument } from "./firestore.js";
 
 const asyncHandler = (fn) => (req, res, next) =>
@@ -49,7 +48,14 @@ app.get("/firestore/collection", asyncHandler(async (req, res) => {
   res.json(await listCollection(req.query.path));
 }));
 app.post("/firestore/document", asyncHandler(async (req, res) => {
-  res.json(await setDocument(req.body.path, req.body.data));
+  // DEBUGGING: Log the exact body received by the endpoint.
+  log("Received POST to /firestore/document with body:", JSON.stringify(req.body, null, 2));
+  
+  const { path, data } = req.body;
+  if (!path || !data) {
+    return res.status(400).json({ error: "Request body must include 'path' and 'data' keys." });
+  }
+  res.json(await setDocument(path, data));
 }));
 app.delete("/firestore/document", asyncHandler(async (req, res) => {
   res.json(await deleteDocument(req.query.path));

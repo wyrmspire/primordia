@@ -3,27 +3,28 @@ import { PROJECT_ID } from "./utils.js";
 
 const logging = new Logging({ projectId: PROJECT_ID });
 
-// This function retrieves and formats logs for a specific Cloud Build ID.
 export async function getBuildLogs({ buildId }) {
   if (!buildId) throw new Error("Missing buildId");
 
-  const filter = `resource.type="build" AND resource.labels.build_id="${buildId}"`;
+  // CRITICAL FIX: The buildId from the API is the full operation name,
+  // e.g., "operations/build/ticktalk-472521/some-long-uuid".
+  // The logging filter needs ONLY the final UUID part.
+  const actualBuildUuid = buildId.split('/').pop();
+
+  const filter = `resource.type="build" AND resource.labels.build_id="${actualBuildUuid}"`;
   
-  // We specify a descending order to get the most recent logs first.
   const options = {
     filter: filter,
     orderBy: "timestamp desc",
-    pageSize: 200, // Get up to 200 of the most recent log lines
+    pageSize: 200,
   };
 
   try {
     const [entries] = await logging.getEntries(options);
     if (!entries.length) {
-      return [`No logs found for build ID: ${buildId}. The build may still be starting or the ID is incorrect.`];
+      return [`No logs found for build ID: ${actualBuildUuid}. The build may still be starting, the ID is incorrect, or logs have not propagated.`];
     }
     
-    // The logs are returned newest-first, so we reverse them to show in chronological order.
-    // We extract the text payload for clean, readable output.
     const formattedLogs = entries.reverse().map(entry => entry.data?.message || JSON.stringify(entry.data));
     
     return formattedLogs;

@@ -8,9 +8,10 @@ export const CACHE_DIR = process.env.CACHE_DIR || "./cache";
 export const CACHE_COLLECTION = process.env.CACHE_COLLECTION || "primordia_cache";
 export const TASKS_COLLECTION = process.env.TASKS_COLLECTION || "primordia_tasks";
 
-// THIS IS THE CRITICAL CHANGE: We now WARN instead of crashing.
+// THIS IS THE CRITICAL CHANGE: We now THROW AN ERROR if the bucket is missing.
+// This will cause a clean, obvious crash on startup if the configuration is wrong.
 if (!BUCKET) {
-  console.warn("[Primordia WARNING] WORKSPACE_BUCKET environment variable is not set. Storage operations will fail.");
+  throw new Error("[Primordia FATAL] WORKSPACE_BUCKET environment variable is not set. Service cannot start.");
 }
 
 export const fetchFn = global.fetch || (await import("node-fetch")).default;
