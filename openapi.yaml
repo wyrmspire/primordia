@@ -1,0 +1,376 @@
+openapi: 3.1.0
+info:
+  title: Primordia Bridge API
+  description: >
+    API for scaffolding, deploying, and managing Google Cloud services,
+    including a hybrid execution engine for both hard-coded and dynamically
+    sourced JavaScript scripts.
+    Features:
+      - Cloud Run + Cloud Functions orchestration
+      - Dynamic runtime logic from GCS and Firestore
+      - Secure sandbox execution with Node.js native `vm` module
+  version: "4.1.0"
+
+servers:
+  - url: https://your-project-url.us-central1.run.app
+    description: Production Server
+
+x-environment:
+  - name: BUCKET_NAME
+    required: true
+    description: GCS bucket for scripts/configs
+  - name: USE_FIRESTORE
+    required: false
+    description: Enables Firestore fallback
+  - name: GOOGLE_CLOUD_PROJECT
+    required: false
+    description: Optional for service discovery
+
+security:
+  - bearerAuth: []
+
+paths:
+  /healthz:
+    get:
+      summary: Health Check
+      description: Verifies that the bridge service is running and responsive.
+      operationId: getHealthCheck
+      responses:
+        '200':
+          description: Service is healthy.
+          content:
+            application/json:
+              schema:
+                type: string
+                example: "🚀 Primordia Bridge OK"
+
+  /files:
+    get:
+      summary: List All Workspace Files
+      operationId: listWorkspaceFiles
+      responses:
+        '200':
+          description: List of file paths.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  files:
+                    type: array
+                    items:
+                      type: string
+
+  /file:
+    get:
+      summary: Read File
+      operationId: getFile
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Contents of the file.
+          content:
+            application/json:
+              schema:
+                type: string
+    post:
+      summary: Write File
+      operationId: postFile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - path
+                - content
+              properties:
+                path:
+                  type: string
+                content:
+                  type: string
+      responses:
+        '200':
+          description: Confirmation of the write operation.
+
+  /scaffold/function:
+    post:
+      summary: Scaffold Cloud Function
+      operationId: scaffoldFunction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+      responses:
+        '200':
+          description: Scaffold created successfully.
+
+  /scaffold/run:
+    post:
+      summary: Scaffold Cloud Run Service
+      operationId: scaffoldRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+      responses:
+        '200':
+          description: Scaffold created successfully.
+
+  /deploy:
+    post:
+      summary: Deploy Service
+      description: >
+        Triggers a Cloud Build to deploy a scaffolded function or service.
+        The `target` parameter determines whether it's deployed to Cloud Functions
+        or Cloud Run.
+      operationId: deployService
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - target
+                - confirm
+              properties:
+                name:
+                  type: string
+                target:
+                  type: string
+                  enum:
+                    - cloudfunctions
+                    - cloudrun
+                confirm:
+                  type: boolean
+      responses:
+        '200':
+          description: Build started.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  status:
+                    type: string
+                  operation:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /logs:
+    get:
+      summary: Get Build Logs
+      operationId: getBuildLogs
+      parameters:
+        - name: buildId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Build logs retrieved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  buildId:
+                    type: string
+                  logs:
+                    type: array
+                    items:
+                      type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /task/{taskName}:
+    post:
+      summary: Run Hard-Coded Task
+      description: >
+        Executes a pre-defined task configured by a JSON file in GCS (`configs/<taskName>.json`).
+      operationId: runHardCodedTask
+      parameters:
+        - name: taskName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FreeFormObject'
+        '404':
+          $ref: '#/components/responses/BadRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /run/{scriptName}:
+    get:
+      summary: Test Dynamic Script
+      description: |
+        Executes a dynamic script with query parameters for ad-hoc testing.
+        Lookup order:
+          1. GCS bucket `${BUCKET_NAME}/scripts/<scriptName>.js`
+          2. Firestore document `scripts/<scriptName>`
+      operationId: testDynamicScript
+      parameters:
+        - name: scriptName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Script result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FreeFormObject'
+        '500':
+          $ref: '#/components/responses/ScriptError'
+    post:
+      summary: Run Dynamic Script
+      description: |
+        Executes a JavaScript file from GCS/Firestore (`scripts/<scriptName>.js`)
+        inside a Node.js `vm` sandbox.
+        The request body is injected as `params` in the sandbox.
+      operationId: runDynamicScript
+      parameters:
+        - name: scriptName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: {}
+              additionalProperties: true
+      responses:
+        '200':
+          description: Script executed successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FreeFormObject'
+        '404':
+          $ref: '#/components/responses/BadRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ScriptError'
+
+  /firestore/document:
+    get:
+      summary: Get Firestore Document
+      operationId: getFirestoreDocument
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Document data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FreeFormObject'
+    post:
+      summary: Set Firestore Document
+      operationId: setFirestoreDocument
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - path
+                - data
+              properties:
+                path:
+                  type: string
+                data:
+                  $ref: '#/components/schemas/FreeFormObject'
+      responses:
+        '200':
+          description: Write confirmed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  path:
+                    type: string
+
+components:
+  schemas:
+    FreeFormObject:
+      type: object
+      properties: {}
+      additionalProperties: true
+      description: A free-form JSON object (key-value pairs).
+  responses:
+    BadRequest:
+      description: Malformed or missing parameters.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+            example:
+              error: "Missing required parameter"
+    ScriptError:
+      description: A dynamic script failed to execute correctly.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+              stack:
+                type: string
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
