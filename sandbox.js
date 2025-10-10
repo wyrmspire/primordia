@@ -1,29 +1,25 @@
-import { VM } from 'vm2';
+import vm from 'vm';
 
 /**
- * Executes a script in a sandboxed environment.
+ * Executes a script in a sandboxed environment using Node.js's native vm module.
  * @param {string} scriptCode The JavaScript code to execute.
  * @param {object} params The parameters to make available to the script.
  * @returns {Promise<any>} A promise that resolves with the script's result.
  */
 export async function executeInSandbox(scriptCode, params = {}) {
-  // We use the vm2 library for a more secure and robust sandbox than the native 'vm' module.
-  // It protects against prototype pollution and other vulnerabilities.
-  const vm = new VM({
-    timeout: 1000, // 1-second timeout to prevent infinite loops
-    sandbox: {
-      params, // The 'params' object from the request body
-      result: null, // A variable the script is expected to set
-    },
-    eval: false,
-    wasm: false,
-  });
+  const context = {
+    params,
+    result: null, // The script is expected to set this variable.
+    console: {
+      log: (...args) => console.log('[Sandbox Log]', ...args)
+    }
+  };
+
+  vm.createContext(context);
 
   try {
-    // Run the script. The script should assign its output to the 'result' variable.
-    vm.run(scriptCode);
-    const scriptResult = vm.getGlobal('result');
-    return { success: true, result: scriptResult };
+    vm.runInContext(scriptCode, context, { timeout: 1000 }); // 1-second timeout
+    return { success: true, result: context.result };
   } catch (err) {
     console.error('[Sandbox] Script execution error:', err.message);
     return { success: false, error: err.message };

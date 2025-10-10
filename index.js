@@ -1,12 +1,13 @@
 import express from "express";
-import { listAllFiles, readFileText, writeFileText } from "./storage.js";
-import { isSafePath, log, BUCKET } from "./utils.js";
+import { readFileText, writeFileText } from "./storage.js";
+import { log } from "./utils.js";
 import { scaffoldFunction, scaffoldRun } from "./scaffold.js";
 import { deploy } from "./deploy.js";
 import { getBuildLogs } from "./logs.js";
 import { getDocument, setDocument, deleteDocument } from "./firestore.js";
-// --- NEW: Import the sandbox executor ---
-import { executeInSandbox } from "./sandbox.js";
+// --- HYBRID IMPORTS ---
+import { taskRegistry } from "./tasks.js";      // For hard-coded tasks
+import { executeInSandbox } from "./sandbox.js"; // For dynamic scripts
 
 const asyncHandler = (fn) => (req, res, next) =>
   Promise.resolve(fn(req, res, next)).catch(next);
@@ -14,9 +15,8 @@ const asyncHandler = (fn) => (req, res, next) =>
 const app = express();
 app.use(express.json());
 
-// --- Existing Endpoints (Unchanged) ---
+// --- Core Endpoints ---
 app.get(["/", "/healthz"], (_, res) => res.send("🚀 Primordia Bridge OK"));
-app.get("/files", asyncHandler(async (_, res) => res.json({ files: await listAllFiles() })));
 app.post("/scaffold/function", asyncHandler(async (req, res) => res.json(await scaffoldFunction(req.body))));
 app.post("/scaffold/run", asyncHandler(async (req, res) => res.json(await scaffoldRun(req.body))));
 app.post("/deploy", asyncHandler(async (req, res) => res.json(await deploy(req.body))));
@@ -26,68 +26,68 @@ app.post("/firestore/document", asyncHandler(async (req, res) => res.json(await 
 app.delete("/firestore/document", asyncHandler(async (req, res) => res.json(await deleteDocument(req.query.path))));
 
 
-// --- NEW: Dynamic Script Runner Endpoint ---
+// --- HARD-CODED TASK RUNNER ---
+app.post("/task/:taskName", asyncHandler(async (req, res) => {
+  const { taskName } = req.params;
+  const taskFunction = taskRegistry[taskName];
+  if (!taskFunction) {
+    return res.status(404).json({ error: `Task '${taskName}' is not a valid task.` });
+  }
+  let config = {};
+  try {
+    const gcsPath = `configs/${taskName}.json`;
+    config = JSON.parse(await readFileText(gcsPath));
+    log(`[TaskRunner] Loaded config for '${taskName}' from GCS.`);
+  } catch (err) {
+    log(`[TaskRunner] No external config found for '${taskName}'.`);
+  }
+  const result = await taskFunction(config);
+  res.json({ success: true, ...result });
+}));
+
+// --- DYNAMIC SCRIPT RUNNER ---
 app.post("/run/:scriptName", asyncHandler(async (req, res) => {
   const { scriptName } = req.params;
   const params = req.body || {};
   let scriptCode = null;
-
-  log(`[Runner] Attempting to run script '${scriptName}'...`);
-
-  // 1. Try to fetch the script from Google Cloud Storage first.
   try {
-    const gcsPath = `scripts/${scriptName}.js`;
-    scriptCode = await readFileText(gcsPath);
-    log(`[Runner] Script '${scriptName}' loaded from GCS.`);
+    scriptCode = await readFileText(`scripts/${scriptName}.js`);
+    log(`[ScriptRunner] Script '${scriptName}' loaded from GCS.`);
   } catch (gcsError) {
-    log(`[Runner] Script not found in GCS. Checking Firestore fallback...`);
-    // 2. If GCS fails and Firestore fallback is enabled, try Firestore.
     if (process.env.USE_FIRESTORE === 'true') {
-      try {
-        const doc = await getDocument(`scripts/${scriptName}`);
-        if (doc && doc.code) {
-          scriptCode = doc.code;
-          log(`[Runner] Script '${scriptName}' loaded from Firestore.`);
-        }
-      } catch (firestoreError) {
-        // Firestore also failed, proceed to 404
+      const doc = await getDocument(`scripts/${scriptName}`);
+      if (doc && doc.code) {
+        scriptCode = doc.code;
+        log(`[ScriptRunner] Script '${scriptName}' loaded from Firestore.`);
       }
     }
   }
-
   if (!scriptCode) {
-    log(`[Runner] Script '${scriptName}' not found in any source.`);
     return res.status(404).json({ error: `Script '${scriptName}' not found.` });
   }
-
-  // 3. Execute the script in the sandbox and return its result.
   const result = await executeInSandbox(scriptCode, params);
   res.json(result);
 }));
 
-// --- NEW: Admin Endpoint to Upload/Sync Scripts ---
-app.post("/admin/uploadScript", asyncHandler(async (req, res) => {
-  const { name, code } = req.body;
-  if (!name || !code) {
-    return res.status(400).json({ error: "Request body must include 'name' and 'code'." });
-  }
-
-  log(`[Admin] Uploading script '${name}'...`);
-  const gcsPath = `scripts/${name}.js`;
-  const firestorePath = `scripts/${name}`;
-
-  // Use Promise.all to write to both GCS and Firestore simultaneously.
-  await Promise.all([
-    writeFileText(gcsPath, code),
-    setDocument(firestorePath, { code, updatedAt: new Date().toISOString() })
-  ]);
-
-  log(`[Admin] Script '${name}' successfully uploaded to GCS and Firestore.`);
-  res.json({ success: true, message: `Script '${name}' synced.` });
+// --- ADMIN ENDPOINTS FOR BOTH ---
+app.post("/admin/uploadConfig", asyncHandler(async (req, res) => {
+  const { name, config } = req.body;
+  await writeFileText(`configs/${name}.json`, JSON.stringify(config, null, 2));
+  res.json({ success: true, message: `Config for '${name}' saved to GCS.` });
 }));
 
+app.post("/admin/uploadScript", asyncHandler(async (req, res) => {
+  const { name, code } = req.body;
+  const gcsPath = `scripts/${name}.js`;
+  const firestorePath = `scripts/${name}`;
+  await Promise.all([
+    writeFileText(gcsPath, code),
+    setDocument(firestorePath, { code })
+  ]);
+  res.json({ success: true, message: `Script '${name}' synced to GCS and Firestore.` });
+}));
 
-// --- Centralized Error Handler (Unchanged) ---
+// --- Error Handler ---
 app.use(async (err, req, res, next) => {
   log("ERROR:", err.message);
   res.status(500).json({ error: err.message || "An unexpected error occurred." });

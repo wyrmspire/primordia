@@ -1,32 +1,22 @@
 #!/bin/bash
 set -e
-
-# --- GIT SANITY CHECK ---
 if [[ -n $(git status --porcelain) ]]; then
   echo "❌ Uncommitted changes found. Please commit before deploying."
   git status
   exit 1
 fi
 echo "✅ Git status is clean."
-
 echo "✅ Reading configuration from .env file..."
 export $(grep -v '^#' .env | xargs)
-
-# Note: The required IAM permissions (storage.admin, datastore.user)
-# are already granted in your existing setup, so no permission changes are needed.
-
 echo "🚀 Starting the Cloud Build deployment..."
 gcloud builds submit \
   --config cloudbuild.yaml \
-  # --- UPDATED: Pass the new substitution variable ---
   --substitutions=_PROJECT_ID=$PROJECT_ID,_REGION=$REGION,_WORKSPACE_BUCKET=$WORKSPACE_BUCKET,_CACHE_COLLECTION=$CACHE_COLLECTION,_TASKS_COLLECTION=$TASKS_COLLECTION,_USE_FIRESTORE=true \
   .
-
 echo "🎉 Verifying the live service..."
 SERVICE_URL=$(gcloud run services describe primordia --region ${REGION} --format='value(status.url)')
 echo "Service is live at: ${SERVICE_URL}"
 echo "Pinging /healthz endpoint (retrying up to 50s)..."
-
 for i in {1..10}; do
   if curl -sSf -o /dev/null "${SERVICE_URL}/healthz"; then
     echo ""
@@ -36,6 +26,5 @@ for i in {1..10}; do
   echo "Attempt ${i} failed. Retrying in 5 seconds..."
   sleep 5
 done
-
 echo "❌ Health check failed after 10 attempts."
 exit 1
