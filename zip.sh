@@ -1,13 +1,18 @@
 #!/bin/bash
-# This script creates a clean zip archive of the Primordia source code.
+# A script to create a clean, shareable zip archive of the Primordia source code.
+
+# Exit immediately if a command fails.
+set -e
 
 OUTPUT_FILE="primordia-source.zip"
 
-# Remove the old zip file if it exists
+# Clean up any previous archive.
 rm -f $OUTPUT_FILE
 
-echo "Creating clean archive: ${OUTPUT_FILE}"
+echo "📦 Creating clean source archive: ${OUTPUT_FILE}"
 
+# Zip the current directory recursively, excluding specified patterns.
+# The '-x' flag excludes files/directories.
 zip -r $OUTPUT_FILE . \
   -x "*.git*" \
   -x "node_modules/*" \
@@ -18,6 +23,8 @@ zip -r $OUTPUT_FILE . \
   -x "npm-debug.log*" \
   -x "yarn-debug.log*" \
   -x "yarn-error.log*" \
-  -x "${OUTPUT_FILE}"
+  -x "*.DS_Store" \
+  -x "${OUTPUT_FILE}" \
+  -x "test-local.sh"
 
-echo "✅ Done. Archive created at ./${OUTPUT_FILE}"
+echo "✅ Success! Archive created at ./${OUTPUT_FILE}"
