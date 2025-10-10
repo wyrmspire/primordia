@@ -6,7 +6,9 @@ import { log } from "./utils.js";
 
 const cloudBuild = new CloudBuildClient();
 
-export async function deploy({ name, confirm, target = "cloudfunctions", version = "latest" }) {
+// --- MODIFIED FUNCTION SIGNATURE ---
+// We now accept a `useCache` parameter, defaulting to false.
+export async function deploy({ name, confirm, target = "cloudfunctions", version = "latest", useCache = false }) {
   if (!confirm) throw new Error("Confirmation required");
   if (!name) throw new Error("Missing name");
 
@@ -29,6 +31,11 @@ export async function deploy({ name, confirm, target = "cloudfunctions", version
     log(`[Deploy] Packaged source uploaded to: ${zipUri}`);
   }
 
+  // --- NEW LOGIC FOR CONDITIONAL CACHING ---
+  // If useCache is false, we add the --no-cache flag to the gcloud command.
+  const cacheFlag = useCache ? '' : '--no-cache';
+  log(`[Deploy] Buildpack caching for this deployment is ${useCache ? 'ENABLED' : 'DISABLED'}.`);
+
   log(`[Deploy] Triggering Cloud Build for ${name}...`);
   const [operation] = await cloudBuild.createBuild({
     projectId: PROJECT_ID,
@@ -45,7 +52,10 @@ export async function deploy({ name, confirm, target = "cloudfunctions", version
           unzip /workspace/source.zip -d /workspace/source
           ${
             isRun
-            ? `gcloud run deploy ${name} --source=/workspace/source --region=${REGION} --allow-unauthenticated --platform=managed --timeout=300`
+            // The cacheFlag is now added to the Cloud Run deploy command
+            ? `gcloud run deploy ${name} --source=/workspace/source --region=${REGION} --allow-unauthenticated --platform=managed --timeout=300 ${cacheFlag}`
+            // Note: Gen2 Functions source deploys have different caching mechanisms.
+            // This change primarily affects Cloud Run buildpack caching.
             : `gcloud functions deploy ${name} --gen2 --region=${REGION} --runtime=nodejs20 --trigger-http --allow-unauthenticated --entry-point=main --memory=256MB --timeout=60s --source=/workspace/source`
           }
         `]
