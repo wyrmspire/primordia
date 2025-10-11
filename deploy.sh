@@ -1,13 +1,6 @@
 #!/bin/bash
 set -e
 
-# --- Logic for cache flag ---
-USE_CACHE_FLAG="false"
-if [[ "$1" == "--use-cache" ]]; then
-  USE_CACHE_FLAG="true"
-  echo "🟢 Cache explicitly enabled for this deployment."
-fi
-
 # --- Git safety check ---
 if [[ -n $(git status --porcelain) ]]; then
   echo "❌ Uncommitted changes found. Please commit before deploying."
@@ -18,8 +11,7 @@ echo "✅ Git status is clean."
 echo "✅ Reading configuration from .env file..."
 export $(grep -v '^#' .env | xargs)
 
-# --- START: NEW ENVIRONMENT VALIDATION ---
-# This new block checks if the PROJECT_ID was loaded successfully.
+# --- Environment Validation ---
 if [ -z "$PROJECT_ID" ]; then
   echo ""
   echo "❌ FATAL: PROJECT_ID is not set in your environment."
@@ -27,13 +19,15 @@ if [ -z "$PROJECT_ID" ]; then
   exit 1
 fi
 echo "✅ Deploying to project: $PROJECT_ID"
-# --- END: NEW VALIDATION ---
 
 echo "🚀 Starting the Cloud Build deployment..."
+
+# --- THE FIX ---
+# The obsolete "_USE_CACHE" substitution has been removed from this command.
 gcloud builds submit \
   --config cloudbuild.yaml \
   --project=$PROJECT_ID \
-  --substitutions=_PROJECT_ID=$PROJECT_ID,_REGION=$REGION,_WORKSPACE_BUCKET=$WORKSPACE_BUCKET,_CACHE_COLLECTION=$CACHE_COLLECTION,_TASKS_COLLECTION=$TASKS_COLLECTION,_USE_FIRESTORE=true,_USE_CACHE=$USE_CACHE_FLAG \
+  --substitutions=_PROJECT_ID=$PROJECT_ID,_REGION=$REGION,_WORKSPACE_BUCKET=$WORKSPACE_BUCKET,_CACHE_COLLECTION=$CACHE_COLLECTION,_TASKS_COLLECTION=$TASKS_COLLECTION,_USE_FIRESTORE=true \
   .
 
 echo "🎉 Verifying the live service..."
