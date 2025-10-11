@@ -1,275 +1,244 @@
 openapi: 3.1.0
 info:
   title: Primordia Bridge API
+  version: "0.1.0"
   description: >
-    API for scaffolding, deploying, and managing Google Cloud services,
-    including a hybrid execution engine for both hard-coded and dynamically
-    sourced JavaScript scripts.
-    Features:
-      - Cloud Run + Cloud Functions orchestration
-      - Dynamic runtime logic from GCS and Firestore
-      - Secure sandbox execution with Node.js native `vm` module
-  version: "4.1.0"
+    Schema generated from the current server code (api/index.js). Includes:
+    health, workspace job submit/status, file ops, scaffolding, deploy/logs,
+    proxy, task runner, sandboxed script runner, admin config/script upload,
+    and Firestore sandbox endpoints.
 
 servers:
-  - url: https://your-project-url.us-central1.run.app
-    description: Production Server
+  - url: http://localhost:8080
+    description: Local Dev
 
-x-environment:
-  - name: BUCKET_NAME
-    required: true
-    description: GCS bucket for scripts/configs
-  - name: USE_FIRESTORE
-    required: false
-    description: Enables Firestore fallback
-  - name: GOOGLE_CLOUD_PROJECT
-    required: false
-    description: Optional for service discovery
-
-security:
-  - bearerAuth: []
+tags:
+  - name: Health
+  - name: Workspace
+  - name: Files
+  - name: Scaffold
+  - name: Deploy
+  - name: Logs
+  - name: Tasks
+  - name: Scripts
+  - name: Admin
+  - name: Firestore
+  - name: Proxy
 
 paths:
-  /healthz:
+  /:
     get:
-      summary: Health Check
-      description: Verifies that the bridge service is running and responsive.
-      operationId: getHealthCheck
+      tags: [Health]
+      summary: Health check (root)
+      operationId: rootHealth
       responses:
         '200':
-          description: Service is healthy.
+          description: Service OK and a test Pub/Sub job published.
           content:
-            application/json:
+            text/plain:
               schema:
                 type: string
-                example: "🚀 Primordia Bridge OK"
+                example: "🚀 Primordia Bridge OK - Test job published to primordia-jobs!"
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Health check
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service OK and a test Pub/Sub job published.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "🚀 Primordia Bridge OK - Test job published to primordia-jobs!"
 
   /files:
     get:
-      summary: List All Workspace Files
-      operationId: listWorkspaceFiles
+      tags: [Files]
+      summary: List workspace files
+      operationId: listFiles
       responses:
         '200':
-          description: List of file paths.
+          description: File paths within the workspace bucket/prefix.
           content:
             application/json:
               schema:
                 type: object
+                required: [files]
                 properties:
                   files:
                     type: array
-                    items:
-                      type: string
+                    items: { type: string }
+              examples:
+                sample:
+                  value:
+                    files:
+                      - "runs/hot-swap-final/handler.js"
+                      - "functions/hello/index.js"
 
   /file:
     get:
-      summary: Read File
-      operationId: getFile
+      tags: [Files]
+      summary: Read a text file
+      operationId: readFile
       parameters:
         - name: path
           in: query
           required: true
-          schema:
-            type: string
+          description: Full workspace path (e.g., runs/hot-swap-final/handler.js)
+          schema: { type: string }
       responses:
         '200':
-          description: Contents of the file.
+          description: File contents (text)
           content:
-            application/json:
-              schema:
-                type: string
+            text/plain:
+              schema: { type: string }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Not found
     post:
-      summary: Write File
-      operationId: postFile
+      tags: [Files]
+      summary: Write/overwrite a text file
+      operationId: writeFile
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required:
-                - path
-                - content
-              properties:
-                path:
-                  type: string
-                content:
-                  type: string
+            schema: { $ref: '#/components/schemas/FileWriteRequest' }
+            examples:
+              writeHandler:
+                value:
+                  path: runs/hot-swap-final/handler.js
+                  content: 'export default (req, res) => { res.json({ message: "Handler was updated LIVE!", success: true, timestamp: new Date().toISOString() }); };'
       responses:
         '200':
-          description: Confirmation of the write operation.
+          description: Write confirmation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FileWriteResponse' }
+              examples:
+                ok:
+                  value:
+                    success: true
+                    message: "Wrote 137 bytes to runs/hot-swap-final/handler.js"
+        '400':
+          $ref: '#/components/responses/BadRequest'
 
   /scaffold/function:
     post:
-      summary: Scaffold Cloud Function
+      tags: [Scaffold]
+      summary: Scaffold a Cloud Function
       operationId: scaffoldFunction
+      deprecated: true
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required:
-                - name
+              required: [name]
               properties:
-                name:
-                  type: string
+                name: { type: string }
       responses:
         '200':
-          description: Scaffold created successfully.
-
-  /scaffold/run:
-    post:
-      summary: Scaffold Cloud Run Service
-      operationId: scaffoldRun
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - name
-              properties:
-                name:
-                  type: string
-      responses:
-        '200':
-          description: Scaffold created successfully.
-
-  /deploy:
-    post:
-      summary: Deploy Service
-      description: >
-        Triggers a Cloud Build to deploy a scaffolded function or service.
-        The `target` parameter determines whether it's deployed to Cloud Functions
-        or Cloud Run.
-      operationId: deployService
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - name
-                - target
-                - confirm
-              properties:
-                name:
-                  type: string
-                target:
-                  type: string
-                  enum:
-                    - cloudfunctions
-                    - cloudrun
-                confirm:
-                  type: boolean
-      responses:
-        '200':
-          description: Build started.
+          description: Scaffold result
           content:
             application/json:
               schema:
                 type: object
-                properties:
-                  success:
-                    type: boolean
-                  status:
-                    type: string
-                  operation:
-                    type: string
+                properties: {}
+                additionalProperties: true
+
+  /scaffold/run:
+    post:
+      tags: [Scaffold]
+      summary: Scaffold a Cloud Run service
+      operationId: scaffoldRun
+      deprecated: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+      responses:
+        '200':
+          description: Scaffold result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: {}
+                additionalProperties: true
+
+  /deploy:
+    post:
+      tags: [Deploy]
+      summary: Trigger a deployment via Cloud Build
+      operationId: deploy
+      deprecated: true
+      description: Delegates to shared/deploy.js
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: {}
+              additionalProperties: true
+      responses:
+        '200':
+          description: Deploy response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: {}
+                additionalProperties: true
         '400':
           $ref: '#/components/responses/BadRequest'
 
   /logs:
     get:
-      summary: Get Build Logs
+      tags: [Logs]
+      summary: Get build logs
       operationId: getBuildLogs
       parameters:
         - name: buildId
           in: query
           required: true
-          schema:
-            type: string
+          schema: { type: string }
       responses:
         '200':
-          description: Build logs retrieved.
+          description: Build logs
           content:
             application/json:
               schema:
                 type: object
+                required: [buildId, logs]
                 properties:
-                  buildId:
-                    type: string
+                  buildId: { type: string }
                   logs:
                     type: array
-                    items:
-                      type: string
+                    items: { type: string }
         '400':
           $ref: '#/components/responses/BadRequest'
 
   /task/{taskName}:
     post:
-      summary: Run Hard-Coded Task
-      description: >
-        Executes a pre-defined task configured by a JSON file in GCS (`configs/<taskName>.json`).
-      operationId: runHardCodedTask
+      tags: [Tasks]
+      summary: Run a named task from the registry
+      operationId: runTask
       parameters:
         - name: taskName
           in: path
           required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Task result.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FreeFormObject'
-        '404':
-          $ref: '#/components/responses/BadRequest'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-
-  /run/{scriptName}:
-    get:
-      summary: Test Dynamic Script
-      description: |
-        Executes a dynamic script with query parameters for ad-hoc testing.
-        Lookup order:
-          1. GCS bucket `${BUCKET_NAME}/scripts/<scriptName>.js`
-          2. Firestore document `scripts/<scriptName>`
-      operationId: testDynamicScript
-      parameters:
-        - name: scriptName
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Script result.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FreeFormObject'
-        '500':
-          $ref: '#/components/responses/ScriptError'
-    post:
-      summary: Run Dynamic Script
-      description: |
-        Executes a JavaScript file from GCS/Firestore (`scripts/<scriptName>.js`)
-        inside a Node.js `vm` sandbox.
-        The request body is injected as `params` in the sandbox.
-      operationId: runDynamicScript
-      parameters:
-        - name: scriptName
-          in: path
-          required: true
-          schema:
-            type: string
+          schema: { type: string }
       requestBody:
         required: false
         content:
@@ -280,37 +249,138 @@ paths:
               additionalProperties: true
       responses:
         '200':
-          description: Script executed successfully.
+          description: Task result
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/FreeFormObject'
+                type: object
+                properties:
+                  success: { type: boolean }
+                additionalProperties: true
         '404':
-          $ref: '#/components/responses/BadRequest'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '500':
-          $ref: '#/components/responses/ScriptError'
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+
+  /run/{scriptName}:
+    post:
+      tags: [Scripts]
+      summary: Execute a sandboxed script
+      operationId: runScript
+      parameters:
+        - name: scriptName
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Arbitrary params passed to the script.
+              properties: {}
+              additionalProperties: true
+      responses:
+        '200':
+          description: Script execution result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: {}
+                additionalProperties: true
+        '404':
+          description: Script not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+
+  /admin/uploadConfig:
+    post:
+      tags: [Admin]
+      summary: Upload a task config JSON to GCS
+      operationId: uploadConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, config]
+              properties:
+                name: { type: string }
+                config:
+                  type: object
+                  properties: {}
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message]
+                properties:
+                  success: { type: boolean }
+                  message: { type: string }
+
+  /admin/uploadScript:
+    post:
+      tags: [Admin]
+      summary: Upload a script (GCS) and mirror to Firestore
+      operationId: uploadScript
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, code]
+              properties:
+                name: { type: string }
+                code: { type: string }
+      responses:
+        '200':
+          description: Synced
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message]
+                properties:
+                  success: { type: boolean }
+                  message: { type: string }
 
   /firestore/document:
     get:
-      summary: Get Firestore Document
+      tags: [Firestore]
+      summary: Get a Firestore document (sandbox)
       operationId: getFirestoreDocument
       parameters:
         - name: path
           in: query
           required: true
-          schema:
-            type: string
+          schema: { type: string }
       responses:
         '200':
-          description: Document data.
+          description: Document data (or empty object)
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/FreeFormObject'
+              schema: { $ref: "#/components/schemas/FreeFormObject" }
+        '400':
+          $ref: '#/components/responses/BadRequest'
     post:
-      summary: Set Firestore Document
+      tags: [Firestore]
+      summary: Set a Firestore document (sandbox)
       operationId: setFirestoreDocument
       requestBody:
         required: true
@@ -318,26 +388,140 @@ paths:
           application/json:
             schema:
               type: object
-              required:
-                - path
-                - data
+              required: [path, data]
               properties:
-                path:
-                  type: string
-                data:
-                  $ref: '#/components/schemas/FreeFormObject'
+                path: { type: string }
+                data: { $ref: "#/components/schemas/FreeFormObject" }
       responses:
         '200':
-          description: Write confirmed.
+          description: Write confirmation
           content:
             application/json:
               schema:
                 type: object
+                required: [success, path]
                 properties:
-                  success:
-                    type: boolean
-                  path:
-                    type: string
+                  success: { type: boolean }
+                  path: { type: string }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    delete:
+      tags: [Firestore]
+      summary: Delete a Firestore document (sandbox)
+      operationId: deleteFirestoreDocument
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Delete confirmation
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, path]
+                properties:
+                  success: { type: boolean }
+                  path: { type: string }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /workspace:
+    post:
+      tags: [Workspace]
+      summary: Submit a job blueprint
+      operationId: submitWorkspaceJob
+      description: Creates a job document in Firestore and publishes its jobId to Pub/Sub.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/JobBlueprint' }
+            examples:
+              deployRun:
+                value:
+                  type: "deploy-run-service"
+                  name: "hot-swap-final"
+      responses:
+        '202':
+          description: Job accepted and queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobAccepted' }
+              examples:
+                ok:
+                  value:
+                    jobId: "61ee39ff-320b-48a2-8019-479f27f92263"
+                    message: "Job accepted and is being processed."
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /workspace/status/{jobId}:
+    get:
+      tags: [Workspace]
+      summary: Get job status
+      operationId: getWorkspaceJobStatus
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Job status document
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobDocument' }
+        '404':
+          description: Job not found
+
+  /workspace/proxy:
+    post:
+      tags: [Proxy]
+      summary: Proxy HTTP request (agent use)
+      operationId: proxyRequest
+      description: >
+        Sends an HTTP request to a remote URL on behalf of the agent with timeout and size caps.
+        Non-text responses are returned as base64.
+        Harden with environment knobs: PROXY_ALLOWLIST, PROXY_MAX_MS, PROXY_MAX_BYTES.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProxyRequest" }
+            examples:
+              getExample:
+                value:
+                  url: "https://hot-swap-final-528663818350.us-central1.run.app/"
+                  method: "GET"
+                  headers: { accept: "application/json" }
+      responses:
+        '200':
+          description: Proxied response (may be truncated if above cap)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProxyResponse' }
+              examples:
+                okJson:
+                  value:
+                    ok: true
+                    status: 200
+                    statusText: "OK"
+                    durationMs: 169
+                    headers:
+                      content-type: "application/json; charset=utf-8"
+                      date: "Sat, 11 Oct 2025 19:06:10 GMT"
+                      etag: 'W/"5d-NqGKDfFrQPNq7R8NZj7Gumlgvj0"'
+                      server: "Google Frontend"
+                      content-length: "93"
+                    body:
+                      kind: "json-text"
+                      value: "{\"message\":\"Handler was updated LIVE!\",\"success\":true,\"timestamp\":\"2025-10-11T19:06:10.535Z\"}"
+                    truncated: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
 
 components:
   schemas:
@@ -345,32 +529,125 @@ components:
       type: object
       properties: {}
       additionalProperties: true
-      description: A free-form JSON object (key-value pairs).
+
+    FileWriteRequest:
+      type: object
+      required: [path, content]
+      properties:
+        path: { type: string, description: Workspace-relative path }
+        content: { type: string, description: Full text to write }
+
+    FileWriteResponse:
+      type: object
+      required: [success, message]
+      properties:
+        success: { type: boolean }
+        message: { type: string }
+
+    JobBlueprint:
+      type: object
+      description: Arbitrary job blueprint with a required type.
+      required: [type]
+      properties:
+        type: { type: string }
+        name: { type: string }
+        params:
+          type: object
+          properties: {}
+          additionalProperties: true
+
+    JobAccepted:
+      type: object
+      required: [jobId, message]
+      properties:
+        jobId: { type: string }
+        message: { type: string }
+
+    JobDocument:
+      type: object
+      description: Firestore job document shape.
+      required: [jobId, status, receivedAt, blueprint, logs, outputs]
+      properties:
+        jobId: { type: string }
+        status:
+          type: string
+          enum: [PENDING, RUNNING, SUCCESS, FAILED]
+        receivedAt: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time, nullable: true }
+        completedAt: { type: string, format: date-time, nullable: true }
+        blueprint: { $ref: '#/components/schemas/JobBlueprint' }
+        logs:
+          type: array
+          items: { type: string }
+        outputs:
+          type: object
+          properties: {}
+          additionalProperties: true
+
+    ProxyRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Absolute http(s) URL to fetch.
+        method:
+          type: string
+          enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS]
+          default: GET
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        body:
+          description: Optional request body. If Content-Type is application/json and this is an object/array, it will be JSON.stringified.
+          oneOf:
+            - type: string
+            - type: object
+            - type: array
+              items: { $ref: "#/components/schemas/FreeFormObject" }
+          nullable: true
+
+    ProxyBody:
+      type: object
+      required: [kind, value]
+      properties:
+        kind:
+          type: string
+          enum: [json-text, text, base64]
+        value:
+          type: string
+          description: Text content or base64 (when kind=base64).
+
+    ProxyResponse:
+      type: object
+      required: [ok, status, durationMs, headers, body, truncated]
+      properties:
+        ok: { type: boolean }
+        status: { type: integer }
+        statusText: { type: string }
+        durationMs: { type: integer }
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: Subset of upstream response headers (content-type, cache-control, date, etag, server, content-length, location).
+        body: { $ref: '#/components/schemas/ProxyBody' }
+        truncated:
+          type: boolean
+          description: True if response exceeded PROXY_MAX_BYTES cap.
+
   responses:
     BadRequest:
-      description: Malformed or missing parameters.
+      description: Malformed or missing required parameters.
       content:
         application/json:
           schema:
             type: object
+            required: [error]
             properties:
-              error:
-                type: string
+              error: { type: string }
+          examples:
             example:
-              error: "Missing required parameter"
-    ScriptError:
-      description: A dynamic script failed to execute correctly.
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              error:
-                type: string
-              stack:
-                type: string
-  securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
+              value: { error: "Invalid request" }

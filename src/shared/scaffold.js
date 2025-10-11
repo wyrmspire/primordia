@@ -11,7 +11,6 @@ function fnIndex(name) {
   return `exports.main = (req, res) => { res.json({ message: "Hello from ${name}! (Cloud Function Gen2)", method: req.method, time: new Date().toISOString() }); };`;
 }
 
-// This is the code for the HOST service (`index.js`) for mutable services
 function runIndex(name) {
   return `import express from "express";
 import { Storage } from "@google-cloud/storage";
@@ -53,7 +52,6 @@ app.listen(PORT, "0.0.0.0", () => {
 });`;
 }
 
-// This function will create the initial "Guest" logic file (`handler.js`)
 function runHandlerIndex(name) {
     return `// Default GUEST logic for '${name}'. This file can be updated live.
 export default (req, res) => {
@@ -76,33 +74,31 @@ async function uploadString(dest, content) {
   }
 }
 
-// --- THIS IS THE GUARANTEED CORRECT FUNCTION ---
-// The stray backslashes have been removed from all template literals.
 export async function scaffoldFunction({ name }) {
   if (!name) throw new Error("Missing function name");
 
-  const destPath = `functions/\${name}/index.js`;
+  const destPath = `functions/${name}/index.js`;
   const [exists] = await storage.bucket(BUCKET).file(destPath).exists();
   if (exists) {
-    throw new Error(`Function '\${name}' already exists. Scaffolding aborted to prevent overwrite.`);
+    throw new Error(`Function '${name}' already exists. Scaffolding aborted to prevent overwrite.`);
   }
 
   await uploadString(destPath, fnIndex(name));
-  await uploadString(`functions/\${name}/package.json`, JSON.stringify({ name, type: "commonjs", dependencies: {} }, null, 2));
-  await cache.set(`scaffold_\${name}`, { name, createdAt: new Date().toISOString(), kind: "function" }, true);
-  return { success: true, message: `Scaffolded function \${name}` };
+  await uploadString(`functions/${name}/package.json`, JSON.stringify({ name, type: "commonjs", dependencies: {} }, null, 2));
+  await cache.set(`scaffold_${name}`, { name, createdAt: new Date().toISOString(), kind: "function" }, true);
+  return { success: true, message: `Scaffolded function ${name}` };
 }
 
 export async function scaffoldRun({ name }) {
   if (!name) throw new Error("Missing service name");
   
-  const indexPath = `runs/\${name}/index.js`;
-  const handlerPath = `runs/\${name}/handler.js`;
-  const packagePath = `runs/\${name}/package.json`;
+  const indexPath = `runs/${name}/index.js`;
+  const handlerPath = `runs/${name}/handler.js`;
+  const packagePath = `runs/${name}/package.json`;
 
   const [exists] = await storage.bucket(BUCKET).file(indexPath).exists();
   if (exists) {
-    throw new Error(`Cloud Run service '\${name}' already exists. Scaffolding aborted to prevent overwrite.`);
+    throw new Error(`Cloud Run service '${name}' already exists. Scaffolding aborted to prevent overwrite.`);
   }
   
   await uploadString(indexPath, runIndex(name));
@@ -111,6 +107,6 @@ export async function scaffoldRun({ name }) {
     name, type: "module", scripts: { start: "node index.js" }, dependencies: { express: "^4.19.2", "@google-cloud/storage": "^7.7.0" }
   }, null, 2));
 
-  await cache.set(`scaffold_run_\${name}`, { name, createdAt: new Date().toISOString(), kind: "run" }, true);
-  return { success: true, message: `Scaffolded Cloud Run service \${name}` };
+  await cache.set(`scaffold_run_${name}`, { name, createdAt: new Date().toISOString(), kind: "run" }, true);
+  return { success: true, message: `Scaffolded Cloud Run service ${name}` };
 }

@@ -20,7 +20,7 @@ steps:
       - "--platform=managed"
       - "--allow-unauthenticated"
       - "--service-account=primordia-sa@${_PROJECT_ID}.iam.gserviceaccount.com"
-      - "--set-env-vars=PROJECT_ID=${_PROJECT_ID},REGION=${_REGION},WORKSPACE_BUCKET=${_WORKSPACE_BUCKET},CACHE_COLLECTION=${_CACHE_COLLECTION},TASKS_COLLECTION=${_TASKS_COLLECTION},USE_FIRESTORE=${_USE_FIRESTORE}"
+      - "--set-env-vars=PROJECT_ID=${_PROJECT_ID},REGION=${_REGION},WORKSPACE_BUCKET=${_WORKSPACE_BUCKET},CACHE_COLLECTION=${_CACHE_COLLECTION},TASKS_COLLECTION=${_TASKS_COLLECTION}
 
 images:
   - "gcr.io/$PROJECT_ID/primordia:$BUILD_ID"

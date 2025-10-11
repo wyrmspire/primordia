@@ -1,20 +1,17 @@
 import { CloudBuildClient } from "@google-cloud/cloudbuild";
-import { PROJECT_ID, REGION } from "./utils.js";
+import { PROJECT_ID, REGION, BUCKET } from "./utils.js";
 import { cache } from "./cache.js";
 import { downloadPrefixToTmp, zipDirectoryToGcs } from "./storage.js";
 import { log } from "./utils.js";
 
 const cloudBuild = new CloudBuildClient();
 
-// --- MODIFIED FUNCTION SIGNATURE ---
-// We accept the `useCache` param but will now ignore it for Cloud Run,
-// as the flag was incorrect. This prevents the bug from happening.
 export async function deploy({ name, confirm, target = "cloudfunctions", version = "latest", useCache = false }) {
   if (!confirm) throw new Error("Confirmation required");
   if (!name) throw new Error("Missing name");
 
   const isRun = target === "cloudrun";
-  const prefix = isRun ? `runs/${name}/` : `functions/${name}/`;
+  const prefix = `runs/${name}/`;
 
   const cacheKey = `zip_${target}_${name}`;
   let zipRecord = await cache.getPersistent(cacheKey);
@@ -32,10 +29,13 @@ export async function deploy({ name, confirm, target = "cloudfunctions", version
     log(`[Deploy] Packaged source uploaded to: ${zipUri}`);
   }
 
-  // --- THE FIX ---
-  // The faulty `cacheFlag` logic has been completely removed.
-  // The gcloud command is now restored to its original, working state.
   log(`[Deploy] Triggering Cloud Build for ${name}...`);
+  
+  // Define the correct deployment command, including the WORKSPACE_BUCKET for Cloud Run
+  const deployCommand = isRun
+    ? `gcloud run deploy ${name} --source=/workspace/source --region=${REGION} --allow-unauthenticated --platform=managed --timeout=300 --set-env-vars=WORKSPACE_BUCKET=${BUCKET}`
+    : `gcloud functions deploy ${name} --gen2 --region=${REGION} --runtime=nodejs20 --trigger-http --allow-unauthenticated --entry-point=main --memory=256MB --timeout=60s --source=/workspace/source`;
+
   const [operation] = await cloudBuild.createBuild({
     projectId: PROJECT_ID,
     build: {
@@ -49,11 +49,7 @@ export async function deploy({ name, confirm, target = "cloudfunctions", version
           echo ">>> Deploying ${name} to ${target}..."
           gsutil cp ${zipUri} /workspace/source.zip
           unzip /workspace/source.zip -d /workspace/source
-          ${
-            isRun
-            ? `gcloud run deploy ${name} --source=/workspace/source --region=${REGION} --allow-unauthenticated --platform=managed --timeout=300`
-            : `gcloud functions deploy ${name} --gen2 --region=${REGION} --runtime=nodejs20 --trigger-http --allow-unauthenticated --entry-point=main --memory=256MB --timeout=60s --source=/workspace/source`
-          }
+          ${deployCommand}
         `]
       }],
       timeout: { seconds: 1200 },
