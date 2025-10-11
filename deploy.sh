@@ -23,11 +23,11 @@ echo "✅ Deploying to project: $PROJECT_ID"
 echo "🚀 Starting the Cloud Build deployment..."
 
 # --- THE FIX ---
-# The obsolete "_USE_CACHE" substitution has been removed from this command.
+# The obsolete "_USE_FIRESTORE" substitution has been removed from this command.
 gcloud builds submit \
   --config cloudbuild.yaml \
   --project=$PROJECT_ID \
-  --substitutions=_PROJECT_ID=$PROJECT_ID,_REGION=$REGION,_WORKSPACE_BUCKET=$WORKSPACE_BUCKET,_CACHE_COLLECTION=$CACHE_COLLECTION,_TASKS_COLLECTION=$TASKS_COLLECTION,_USE_FIRESTORE=true \
+  --substitutions=_PROJECT_ID=$PROJECT_ID,_REGION=$REGION,_WORKSPACE_BUCKET=$WORKSPACE_BUCKET,_CACHE_COLLECTION=$CACHE_COLLECTION,_TASKS_COLLECTION=$TASKS_COLLECTION \
   .
 
 echo "🎉 Verifying the live service..."
