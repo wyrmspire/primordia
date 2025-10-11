@@ -1,10 +1,9 @@
 # -----------------------------------------------------------
-# Primordia Bridge — Production Dockerfile
+# Primordia Bridge — Production Dockerfile (Optimized)
 # -----------------------------------------------------------
-# ✅ Base: Secure, minimal Node.js 20 image
 FROM node:20-slim AS base
 
-# Ensure system certificates for HTTPS (required for GCP SDKs)
+# Install system dependencies
 RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends ca-certificates curl && \
     rm -rf /var/lib/apt/lists/*
@@ -12,14 +11,20 @@ RUN apt-get update -qq && \
 # Set working directory
 WORKDIR /app
 
-# Copy dependency files first for caching
+# --- OPTIMIZATION START ---
+# 1. Copy ONLY the package files first.
+# This creates a separate Docker layer.
 COPY package*.json ./
 
-# Install only production dependencies
+# 2. Install dependencies.
+# This layer will be cached and only re-run if package.json or package-lock.json changes.
+# This is the step that will save us minutes.
 RUN npm ci --omit=dev
 
-# Copy source code
+# 3. Copy the rest of the source code.
+# Changing our source code will no longer cause npm to re-install everything.
 COPY . .
+# --- OPTIMIZATION END ---
 
 # Set environment variables
 ENV NODE_ENV=production

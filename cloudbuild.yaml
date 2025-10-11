@@ -1,57 +1,14 @@
 steps:
-  # --- STEP 1: CONDITIONAL CACHE RESTORE ---
-  # This step now only runs if _USE_CACHE is "true"
-  - name: "gcr.io/cloud-builders/gsutil"
-    id: "Restore Cache"
-    entrypoint: "bash"
-    args:
-      - "-c"
-      - |
-        if [ "${_USE_CACHE}" = "true" ]; then
-          echo ">>> Cache enabled. Attempting to restore node_modules..."
-          (gsutil cp gs://${_PROJECT_ID}-build-cache/node_modules.tar.gz node_modules.tar.gz && tar -xzf node_modules.tar.gz) || echo "Cache not found or failed to restore."
-        else
-          echo ">>> Cache disabled by default. Skipping cache restore."
-        fi
-
-  # This step always runs. If the cache was restored, it will be very fast.
-  # If cache was skipped, it will do a full download.
-  - name: "gcr.io/cloud-builders/npm"
-    id: "Install Dependencies"
-    args: ["install", "--only=production"]
-
-  # --- STEP 3 & 4: CONDITIONAL CACHE SAVE ---
-  # These steps now only run if _USE_CACHE is "true"
-  - name: "gcr.io/cloud-builders/npm"
-    id: "Archive node_modules"
-    entrypoint: "bash"
-    args:
-      - "-c"
-      - |
-        if [ "${_USE_CACHE}" = "true" ]; then
-          echo ">>> Cache enabled. Archiving node_modules..."
-          tar -czf node_modules.tar.gz node_modules
-        else
-          echo ">>> Cache disabled. Skipping archive."
-        fi
-  - name: "gcr.io/cloud-builders/gsutil"
-    id: "Upload Cache"
-    entrypoint: "bash"
-    args:
-      - "-c"
-      - |
-        if [ "${_USE_CACHE}" = "true" ]; then
-          echo ">>> Cache enabled. Uploading archive..."
-          gsutil cp node_modules.tar.gz gs://${_PROJECT_ID}-build-cache/node_modules.tar.gz
-        else
-          echo ">>> Cache disabled. Skipping upload."
-        fi
-
-  # --- Docker and Deploy steps are unchanged ---
+  # STEP 1: Build the container image.
+  # Docker itself will handle caching efficiently now.
   - name: "gcr.io/cloud-builders/docker"
     args: ["build", "-t", "gcr.io/$PROJECT_ID/primordia:$BUILD_ID", "."]
+
+  # STEP 2: Push the built image to the registry.
   - name: "gcr.io/cloud-builders/docker"
     args: ["push", "gcr.io/$PROJECT_ID/primordia:$BUILD_ID"]
+
+  # STEP 3: Deploy the image to Cloud Run.
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
     entrypoint: gcloud
     args:
@@ -75,6 +32,3 @@ substitutions:
   _CACHE_COLLECTION: ""
   _TASKS_COLLECTION: ""
   _USE_FIRESTORE: "true"
-  # --- THIS IS THE KEY CHANGE ---
-  # Set the default behavior to DISABLE the cache
-  _USE_CACHE: "false"
