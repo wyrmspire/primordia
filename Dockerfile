@@ -3,7 +3,8 @@
 # -----------------------------------------------------------
 FROM node:20-slim AS base
 
-RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
+# THE FIX: Add 'procps' which provides the 'ps' command needed by pm2.
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates curl procps && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
