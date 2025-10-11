@@ -9,7 +9,7 @@ info:
     and Firestore sandbox endpoints.
 
 servers:
-  - url: http://localhost:8080
+  - url: https://primordia-528663818350.us-central1.run.app
     description: Local Dev
 
 tags:
@@ -549,7 +549,9 @@ components:
       description: Arbitrary job blueprint with a required type.
       required: [type]
       properties:
-        type: { type: string }
+        type:
+          type: string
+          enum: [scaffold-function, scaffold-run-service, deploy-function, deploy-run-service, create-and-deploy-function, create-and-deploy-run-service]
         name: { type: string }
         params:
           type: object

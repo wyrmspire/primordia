@@ -27,7 +27,7 @@ steps:
       - "--platform=managed"
       - "--allow-unauthenticated"
       - "--service-account=primordia-sa@${_PROJECT_ID}.iam.gserviceaccount.com"
-      - "--set-env-vars=PROJECT_ID=${_PROJECT_ID},REGION=${_REGION},WORKSPACE_BUCKET=${_WORKSPACE_BUCKET},CACHE_COLLECTION=${_CACHE_COLLECTION},TASKS_COLLECTION=${_TASKS_COLLECTION},USE_FIRESTORE=${_USE_FIRESTORE}"
+      - "--set-env-vars=PROJECT_ID=${_PROJECT_ID},REGION=${_REGION},WORKSPACE_BUCKET=${_WORKSPACE_BUCKET},CACHE_COLLECTION=${_CACHE_COLLECTION},TASKS_COLLECTION=${_TASKS_COLLECTION}"
 
 images:
   - "gcr.io/$PROJECT_ID/primordia:$BUILD_ID"
@@ -38,7 +38,6 @@ substitutions:
   _WORKSPACE_BUCKET: ""
   _CACHE_COLLECTION: ""
   _TASKS_COLLECTION: ""
-  _USE_FIRESTORE: "true"
 
 ```
 
@@ -168,6 +167,62 @@ echo "✅ Deploying to project: $PROJECT_ID"
 echo "🚀 Starting the Cloud Build deployment..."
 
 # --- THE FIX ---
+# The obsolete "_USE_FIRESTORE" substitution has been removed from this command.
+gcloud builds submit \
+  --config cloudbuild.yaml \
+  --project=$PROJECT_ID \
+  --substitutions=_PROJECT_ID=$PROJECT_ID,_REGION=$REGION,_WORKSPACE_BUCKET=$WORKSPACE_BUCKET,_CACHE_COLLECTION=$CACHE_COLLECTION,_TASKS_COLLECTION=$TASKS_COLLECTION \
+  .
+
+echo "🎉 Verifying the live service..."
+SERVICE_URL=$(gcloud run services describe primordia --region ${REGION} --project=${PROJECT_ID} --format='value(status.url)')
+echo "Service is live at: ${SERVICE_URL}"
+echo "Pinging /healthz endpoint (retrying up to 50s)..."
+for i in {1..10}; do
+  if curl -sSf -o /dev/null "${SERVICE_URL}/healthz"; then
+    echo ""
+    echo "✅ Health check passed. Deployment complete and verified."
+    exit 0
+  fi
+  echo "Attempt ${i} failed. Retrying in 5 seconds..."
+  sleep 5
+done
+
+echo "❌ Health check failed after 10 attempts."
+exit 1
+
+```
+
+---
+
+## File: `./deploy.sh.bak`
+
+```
+#!/bin/bash
+set -e
+
+# --- Git safety check ---
+if [[ -n $(git status --porcelain) ]]; then
+  echo "❌ Uncommitted changes found. Please commit before deploying."
+  git status
+  exit 1
+fi
+echo "✅ Git status is clean."
+echo "✅ Reading configuration from .env file..."
+export $(grep -v '^#' .env | xargs)
+
+# --- Environment Validation ---
+if [ -z "$PROJECT_ID" ]; then
+  echo ""
+  echo "❌ FATAL: PROJECT_ID is not set in your environment."
+  echo "   Please ensure your '.env' file contains a line like: PROJECT_ID=your-gcp-project-id"
+  exit 1
+fi
+echo "✅ Deploying to project: $PROJECT_ID"
+
+echo "🚀 Starting the Cloud Build deployment..."
+
+# --- THE FIX ---
 # The obsolete "_USE_CACHE" substitution has been removed from this command.
 gcloud builds submit \
   --config cloudbuild.yaml \
@@ -200,32 +255,26 @@ exit 1
 
 ```
 # -----------------------------------------------------------
-# Primordia Bridge — Production Dockerfile (Optimized)
+# Primordia Bridge API — Production Dockerfile
 # -----------------------------------------------------------
 FROM node:20-slim AS base
 
-# Install system dependencies
-RUN apt-get update -qq && \
-    apt-get install -y --no-install-recommends ca-certificates curl && \
-    rm -rf /var/lib/apt/lists/*
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
-# --- OPTIMIZATION START ---
-# 1. Copy ONLY the package files first.
-# This creates a separate Docker layer.
+# 1. Copy ONLY the package files. This creates a cacheable layer.
 COPY package*.json ./
 
-# 2. Install dependencies.
-# This layer will be cached and only re-run if package.json or package-lock.json changes.
-# This is the step that will save us minutes.
+# 2. Install production dependencies.
 RUN npm ci --omit=dev
 
 # 3. Copy the rest of the source code.
-# Changing our source code will no longer cause npm to re-install everything.
 COPY . .
-# --- OPTIMIZATION END ---
+
+# --- IMPORTANT ---
+# Set the final working directory to the API service
+WORKDIR /app/src/api
 
 # Set environment variables
 ENV NODE_ENV=production
@@ -234,7 +283,7 @@ ENV PORT=8080
 # Expose the service port for Cloud Run
 EXPOSE 8080
 
-# Add health check for Cloud Run container monitoring
+# Add health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl --fail http://localhost:${PORT}/healthz || exit 1
 
@@ -242,8 +291,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 RUN useradd -m primordia
 USER primordia
 
-# Start the service
-CMD ["node", "index.js"]
+# Start the API service specifically
+CMD ["node", "--require", "dotenv/config", "index.js"]
 
 ```
 
@@ -306,6 +355,9 @@ WORKSPACE_BUCKET="primordia-bucket"
 # Firestore Collections (can be left as default)
 CACHE_COLLECTION="primordia_cache"
 TASKS_COLLECTION="primordia_tasks"
+PROXY_MAX_MS=8000
+PROXY_MAX_BYTES=1048576
+PROXY_ALLOWLIST=
 
 ```
 
@@ -409,6 +461,7 @@ cache/
 Thumbs.db
 .vscode/
 .idea/
+*.bak
 
 ```
 
@@ -420,275 +473,244 @@ Thumbs.db
 openapi: 3.1.0
 info:
   title: Primordia Bridge API
+  version: "0.1.0"
   description: >
-    API for scaffolding, deploying, and managing Google Cloud services,
-    including a hybrid execution engine for both hard-coded and dynamically
-    sourced JavaScript scripts.
-    Features:
-      - Cloud Run + Cloud Functions orchestration
-      - Dynamic runtime logic from GCS and Firestore
-      - Secure sandbox execution with Node.js native `vm` module
-  version: "4.1.0"
+    Schema generated from the current server code (api/index.js). Includes:
+    health, workspace job submit/status, file ops, scaffolding, deploy/logs,
+    proxy, task runner, sandboxed script runner, admin config/script upload,
+    and Firestore sandbox endpoints.
 
 servers:
-  - url: https://your-project-url.us-central1.run.app
-    description: Production Server
+  - url: https://primordia-528663818350.us-central1.run.app
+    description: Local Dev
 
-x-environment:
-  - name: BUCKET_NAME
-    required: true
-    description: GCS bucket for scripts/configs
-  - name: USE_FIRESTORE
-    required: false
-    description: Enables Firestore fallback
-  - name: GOOGLE_CLOUD_PROJECT
-    required: false
-    description: Optional for service discovery
-
-security:
-  - bearerAuth: []
+tags:
+  - name: Health
+  - name: Workspace
+  - name: Files
+  - name: Scaffold
+  - name: Deploy
+  - name: Logs
+  - name: Tasks
+  - name: Scripts
+  - name: Admin
+  - name: Firestore
+  - name: Proxy
 
 paths:
-  /healthz:
+  /:
     get:
-      summary: Health Check
-      description: Verifies that the bridge service is running and responsive.
-      operationId: getHealthCheck
+      tags: [Health]
+      summary: Health check (root)
+      operationId: rootHealth
       responses:
         '200':
-          description: Service is healthy.
+          description: Service OK and a test Pub/Sub job published.
           content:
-            application/json:
+            text/plain:
               schema:
                 type: string
-                example: "🚀 Primordia Bridge OK"
+                example: "🚀 Primordia Bridge OK - Test job published to primordia-jobs!"
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Health check
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service OK and a test Pub/Sub job published.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "🚀 Primordia Bridge OK - Test job published to primordia-jobs!"
 
   /files:
     get:
-      summary: List All Workspace Files
-      operationId: listWorkspaceFiles
+      tags: [Files]
+      summary: List workspace files
+      operationId: listFiles
       responses:
         '200':
-          description: List of file paths.
+          description: File paths within the workspace bucket/prefix.
           content:
             application/json:
               schema:
                 type: object
+                required: [files]
                 properties:
                   files:
                     type: array
-                    items:
-                      type: string
+                    items: { type: string }
+              examples:
+                sample:
+                  value:
+                    files:
+                      - "runs/hot-swap-final/handler.js"
+                      - "functions/hello/index.js"
 
   /file:
     get:
-      summary: Read File
-      operationId: getFile
+      tags: [Files]
+      summary: Read a text file
+      operationId: readFile
       parameters:
         - name: path
           in: query
           required: true
-          schema:
-            type: string
+          description: Full workspace path (e.g., runs/hot-swap-final/handler.js)
+          schema: { type: string }
       responses:
         '200':
-          description: Contents of the file.
+          description: File contents (text)
           content:
-            application/json:
-              schema:
-                type: string
+            text/plain:
+              schema: { type: string }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Not found
     post:
-      summary: Write File
-      operationId: postFile
+      tags: [Files]
+      summary: Write/overwrite a text file
+      operationId: writeFile
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required:
-                - path
-                - content
-              properties:
-                path:
-                  type: string
-                content:
-                  type: string
+            schema: { $ref: '#/components/schemas/FileWriteRequest' }
+            examples:
+              writeHandler:
+                value:
+                  path: runs/hot-swap-final/handler.js
+                  content: 'export default (req, res) => { res.json({ message: "Handler was updated LIVE!", success: true, timestamp: new Date().toISOString() }); };'
       responses:
         '200':
-          description: Confirmation of the write operation.
+          description: Write confirmation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FileWriteResponse' }
+              examples:
+                ok:
+                  value:
+                    success: true
+                    message: "Wrote 137 bytes to runs/hot-swap-final/handler.js"
+        '400':
+          $ref: '#/components/responses/BadRequest'
 
   /scaffold/function:
     post:
-      summary: Scaffold Cloud Function
+      tags: [Scaffold]
+      summary: Scaffold a Cloud Function
       operationId: scaffoldFunction
+      deprecated: true
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required:
-                - name
+              required: [name]
               properties:
-                name:
-                  type: string
+                name: { type: string }
       responses:
         '200':
-          description: Scaffold created successfully.
-
-  /scaffold/run:
-    post:
-      summary: Scaffold Cloud Run Service
-      operationId: scaffoldRun
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - name
-              properties:
-                name:
-                  type: string
-      responses:
-        '200':
-          description: Scaffold created successfully.
-
-  /deploy:
-    post:
-      summary: Deploy Service
-      description: >
-        Triggers a Cloud Build to deploy a scaffolded function or service.
-        The `target` parameter determines whether it's deployed to Cloud Functions
-        or Cloud Run.
-      operationId: deployService
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - name
-                - target
-                - confirm
-              properties:
-                name:
-                  type: string
-                target:
-                  type: string
-                  enum:
-                    - cloudfunctions
-                    - cloudrun
-                confirm:
-                  type: boolean
-      responses:
-        '200':
-          description: Build started.
+          description: Scaffold result
           content:
             application/json:
               schema:
                 type: object
-                properties:
-                  success:
-                    type: boolean
-                  status:
-                    type: string
-                  operation:
-                    type: string
+                properties: {}
+                additionalProperties: true
+
+  /scaffold/run:
+    post:
+      tags: [Scaffold]
+      summary: Scaffold a Cloud Run service
+      operationId: scaffoldRun
+      deprecated: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+      responses:
+        '200':
+          description: Scaffold result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: {}
+                additionalProperties: true
+
+  /deploy:
+    post:
+      tags: [Deploy]
+      summary: Trigger a deployment via Cloud Build
+      operationId: deploy
+      deprecated: true
+      description: Delegates to shared/deploy.js
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: {}
+              additionalProperties: true
+      responses:
+        '200':
+          description: Deploy response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: {}
+                additionalProperties: true
         '400':
           $ref: '#/components/responses/BadRequest'
 
   /logs:
     get:
-      summary: Get Build Logs
+      tags: [Logs]
+      summary: Get build logs
       operationId: getBuildLogs
       parameters:
         - name: buildId
           in: query
           required: true
-          schema:
-            type: string
+          schema: { type: string }
       responses:
         '200':
-          description: Build logs retrieved.
+          description: Build logs
           content:
             application/json:
               schema:
                 type: object
+                required: [buildId, logs]
                 properties:
-                  buildId:
-                    type: string
+                  buildId: { type: string }
                   logs:
                     type: array
-                    items:
-                      type: string
+                    items: { type: string }
         '400':
           $ref: '#/components/responses/BadRequest'
 
   /task/{taskName}:
     post:
-      summary: Run Hard-Coded Task
-      description: >
-        Executes a pre-defined task configured by a JSON file in GCS (`configs/<taskName>.json`).
-      operationId: runHardCodedTask
+      tags: [Tasks]
+      summary: Run a named task from the registry
+      operationId: runTask
       parameters:
         - name: taskName
           in: path
           required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Task result.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FreeFormObject'
-        '404':
-          $ref: '#/components/responses/BadRequest'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-
-  /run/{scriptName}:
-    get:
-      summary: Test Dynamic Script
-      description: |
-        Executes a dynamic script with query parameters for ad-hoc testing.
-        Lookup order:
-          1. GCS bucket `${BUCKET_NAME}/scripts/<scriptName>.js`
-          2. Firestore document `scripts/<scriptName>`
-      operationId: testDynamicScript
-      parameters:
-        - name: scriptName
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Script result.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FreeFormObject'
-        '500':
-          $ref: '#/components/responses/ScriptError'
-    post:
-      summary: Run Dynamic Script
-      description: |
-        Executes a JavaScript file from GCS/Firestore (`scripts/<scriptName>.js`)
-        inside a Node.js `vm` sandbox.
-        The request body is injected as `params` in the sandbox.
-      operationId: runDynamicScript
-      parameters:
-        - name: scriptName
-          in: path
-          required: true
-          schema:
-            type: string
+          schema: { type: string }
       requestBody:
         required: false
         content:
@@ -699,37 +721,138 @@ paths:
               additionalProperties: true
       responses:
         '200':
-          description: Script executed successfully.
+          description: Task result
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/FreeFormObject'
+                type: object
+                properties:
+                  success: { type: boolean }
+                additionalProperties: true
         '404':
-          $ref: '#/components/responses/BadRequest'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '500':
-          $ref: '#/components/responses/ScriptError'
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+
+  /run/{scriptName}:
+    post:
+      tags: [Scripts]
+      summary: Execute a sandboxed script
+      operationId: runScript
+      parameters:
+        - name: scriptName
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Arbitrary params passed to the script.
+              properties: {}
+              additionalProperties: true
+      responses:
+        '200':
+          description: Script execution result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: {}
+                additionalProperties: true
+        '404':
+          description: Script not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+
+  /admin/uploadConfig:
+    post:
+      tags: [Admin]
+      summary: Upload a task config JSON to GCS
+      operationId: uploadConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, config]
+              properties:
+                name: { type: string }
+                config:
+                  type: object
+                  properties: {}
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message]
+                properties:
+                  success: { type: boolean }
+                  message: { type: string }
+
+  /admin/uploadScript:
+    post:
+      tags: [Admin]
+      summary: Upload a script (GCS) and mirror to Firestore
+      operationId: uploadScript
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, code]
+              properties:
+                name: { type: string }
+                code: { type: string }
+      responses:
+        '200':
+          description: Synced
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message]
+                properties:
+                  success: { type: boolean }
+                  message: { type: string }
 
   /firestore/document:
     get:
-      summary: Get Firestore Document
+      tags: [Firestore]
+      summary: Get a Firestore document (sandbox)
       operationId: getFirestoreDocument
       parameters:
         - name: path
           in: query
           required: true
-          schema:
-            type: string
+          schema: { type: string }
       responses:
         '200':
-          description: Document data.
+          description: Document data (or empty object)
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/FreeFormObject'
+              schema: { $ref: "#/components/schemas/FreeFormObject" }
+        '400':
+          $ref: '#/components/responses/BadRequest'
     post:
-      summary: Set Firestore Document
+      tags: [Firestore]
+      summary: Set a Firestore document (sandbox)
       operationId: setFirestoreDocument
       requestBody:
         required: true
@@ -737,26 +860,140 @@ paths:
           application/json:
             schema:
               type: object
-              required:
-                - path
-                - data
+              required: [path, data]
               properties:
-                path:
-                  type: string
-                data:
-                  $ref: '#/components/schemas/FreeFormObject'
+                path: { type: string }
+                data: { $ref: "#/components/schemas/FreeFormObject" }
       responses:
         '200':
-          description: Write confirmed.
+          description: Write confirmation
           content:
             application/json:
               schema:
                 type: object
+                required: [success, path]
                 properties:
-                  success:
-                    type: boolean
-                  path:
-                    type: string
+                  success: { type: boolean }
+                  path: { type: string }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    delete:
+      tags: [Firestore]
+      summary: Delete a Firestore document (sandbox)
+      operationId: deleteFirestoreDocument
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Delete confirmation
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, path]
+                properties:
+                  success: { type: boolean }
+                  path: { type: string }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /workspace:
+    post:
+      tags: [Workspace]
+      summary: Submit a job blueprint
+      operationId: submitWorkspaceJob
+      description: Creates a job document in Firestore and publishes its jobId to Pub/Sub.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/JobBlueprint' }
+            examples:
+              deployRun:
+                value:
+                  type: "deploy-run-service"
+                  name: "hot-swap-final"
+      responses:
+        '202':
+          description: Job accepted and queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobAccepted' }
+              examples:
+                ok:
+                  value:
+                    jobId: "61ee39ff-320b-48a2-8019-479f27f92263"
+                    message: "Job accepted and is being processed."
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /workspace/status/{jobId}:
+    get:
+      tags: [Workspace]
+      summary: Get job status
+      operationId: getWorkspaceJobStatus
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Job status document
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobDocument' }
+        '404':
+          description: Job not found
+
+  /workspace/proxy:
+    post:
+      tags: [Proxy]
+      summary: Proxy HTTP request (agent use)
+      operationId: proxyRequest
+      description: >
+        Sends an HTTP request to a remote URL on behalf of the agent with timeout and size caps.
+        Non-text responses are returned as base64.
+        Harden with environment knobs: PROXY_ALLOWLIST, PROXY_MAX_MS, PROXY_MAX_BYTES.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProxyRequest" }
+            examples:
+              getExample:
+                value:
+                  url: "https://hot-swap-final-528663818350.us-central1.run.app/"
+                  method: "GET"
+                  headers: { accept: "application/json" }
+      responses:
+        '200':
+          description: Proxied response (may be truncated if above cap)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProxyResponse' }
+              examples:
+                okJson:
+                  value:
+                    ok: true
+                    status: 200
+                    statusText: "OK"
+                    durationMs: 169
+                    headers:
+                      content-type: "application/json; charset=utf-8"
+                      date: "Sat, 11 Oct 2025 19:06:10 GMT"
+                      etag: 'W/"5d-NqGKDfFrQPNq7R8NZj7Gumlgvj0"'
+                      server: "Google Frontend"
+                      content-length: "93"
+                    body:
+                      kind: "json-text"
+                      value: "{\"message\":\"Handler was updated LIVE!\",\"success\":true,\"timestamp\":\"2025-10-11T19:06:10.535Z\"}"
+                    truncated: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
 
 components:
   schemas:
@@ -764,35 +1001,130 @@ components:
       type: object
       properties: {}
       additionalProperties: true
-      description: A free-form JSON object (key-value pairs).
+
+    FileWriteRequest:
+      type: object
+      required: [path, content]
+      properties:
+        path: { type: string, description: Workspace-relative path }
+        content: { type: string, description: Full text to write }
+
+    FileWriteResponse:
+      type: object
+      required: [success, message]
+      properties:
+        success: { type: boolean }
+        message: { type: string }
+
+    JobBlueprint:
+      type: object
+      description: Arbitrary job blueprint with a required type.
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [scaffold-function, scaffold-run-service, deploy-function, deploy-run-service, create-and-deploy-function, create-and-deploy-run-service]
+        name: { type: string }
+        params:
+          type: object
+          properties: {}
+          additionalProperties: true
+
+    JobAccepted:
+      type: object
+      required: [jobId, message]
+      properties:
+        jobId: { type: string }
+        message: { type: string }
+
+    JobDocument:
+      type: object
+      description: Firestore job document shape.
+      required: [jobId, status, receivedAt, blueprint, logs, outputs]
+      properties:
+        jobId: { type: string }
+        status:
+          type: string
+          enum: [PENDING, RUNNING, SUCCESS, FAILED]
+        receivedAt: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time, nullable: true }
+        completedAt: { type: string, format: date-time, nullable: true }
+        blueprint: { $ref: '#/components/schemas/JobBlueprint' }
+        logs:
+          type: array
+          items: { type: string }
+        outputs:
+          type: object
+          properties: {}
+          additionalProperties: true
+
+    ProxyRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Absolute http(s) URL to fetch.
+        method:
+          type: string
+          enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS]
+          default: GET
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        body:
+          description: Optional request body. If Content-Type is application/json and this is an object/array, it will be JSON.stringified.
+          oneOf:
+            - type: string
+            - type: object
+            - type: array
+              items: { $ref: "#/components/schemas/FreeFormObject" }
+          nullable: true
+
+    ProxyBody:
+      type: object
+      required: [kind, value]
+      properties:
+        kind:
+          type: string
+          enum: [json-text, text, base64]
+        value:
+          type: string
+          description: Text content or base64 (when kind=base64).
+
+    ProxyResponse:
+      type: object
+      required: [ok, status, durationMs, headers, body, truncated]
+      properties:
+        ok: { type: boolean }
+        status: { type: integer }
+        statusText: { type: string }
+        durationMs: { type: integer }
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: Subset of upstream response headers (content-type, cache-control, date, etag, server, content-length, location).
+        body: { $ref: '#/components/schemas/ProxyBody' }
+        truncated:
+          type: boolean
+          description: True if response exceeded PROXY_MAX_BYTES cap.
+
   responses:
     BadRequest:
-      description: Malformed or missing parameters.
+      description: Malformed or missing required parameters.
       content:
         application/json:
           schema:
             type: object
+            required: [error]
             properties:
-              error:
-                type: string
+              error: { type: string }
+          examples:
             example:
-              error: "Missing required parameter"
-    ScriptError:
-      description: A dynamic script failed to execute correctly.
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              error:
-                type: string
-              stack:
-                type: string
-  securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
+              value: { error: "Invalid request" }
 
 ```
 
@@ -2182,6 +2514,7 @@ echo "You should see output from both the API and the Worker services."
 ## File: `./src/api/index.js`
 
 ```javascript
+import { proxyHandler } from "./proxy.js";
 
 // --- This command will completely overwrite the api/index.js file with the correct code ---
 import { publishMessage } from "../shared/pubsub.js";
@@ -2335,176 +2668,8 @@ app.get("/workspace/status/:jobId", asyncHandler(async (req, res) => {
 }));
 
 
-app.use(async (err, req, res, next) => {
-  log("ERROR:", err.message);
-  res.status(500).json({ error: err.message || "An unexpected error occurred." });
-});
 
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, "0.0.0.0", () => log(`🚀 Primordia Bridge running on port ${PORT}`));
-
-export default app;
-
-```
-
----
-
-## File: `./src/api/index.js.bak`
-
-```
-import { randomUUID } from "crypto";
-
-// --- This command will completely overwrite the api/index.js file with the correct code ---
-import { publishMessage } from "../shared/pubsub.js";
-import express from "express";
-import { listAllFiles, readFileText, writeFileText } from "../shared/storage.js";
-import { isSafePath, log } from "../shared/utils.js";
-import { scaffoldFunction, scaffoldRun } from "../shared/scaffold.js";
-import { deploy } from "../shared/deploy.js";
-import { getBuildLogs } from "../shared/logs.js";
-import { getDocument, setDocument, deleteDocument } from "../shared/firestore.js";
-import { taskRegistry } from "../shared/tasks.js";
-import { executeInSandbox } from "../shared/sandbox.js";
-
-const asyncHandler = (fn) => (req, res, next) =>
-  Promise.resolve(fn(req, res, next)).catch(next);
-
-const app = express();
-app.use(express.json());
-
-// --- Corrected Healthz Route ---
-app.get(["/", "/healthz"], asyncHandler(async (_, res) => {
-  const job = { type: "HEALTH_CHECK", timestamp: new Date().toISOString() };
-  await publishMessage("primordia-jobs", job);
-  res.send("🚀 Primordia Bridge OK - Test job published to primordia-jobs!");
-}));
-
-app.get("/files", asyncHandler(async (_, res) => res.json({ files: await listAllFiles() })));
-
-app.get("/file", asyncHandler(async (req, res) => {
-  if (!isSafePath(req.query.path)) return res.status(400).send("Invalid path");
-  res.type("text/plain").send(await readFileText(req.query.path));
-}));
-app.post("/file", asyncHandler(async (req, res) => {
-  const { path: p, content } = req.body;
-  if (!isSafePath(p) || typeof content !== 'string') return res.status(400).json({ error: "Invalid path or missing content" });
-  await writeFileText(p, content);
-  res.json({ success: true, message: `Wrote ${content.length} bytes to ${p}` });
-}));
-
-app.post("/scaffold/function", asyncHandler(async (req, res) => res.json(await scaffoldFunction(req.body))));
-app.post("/scaffold/run", asyncHandler(async (req, res) => res.json(await scaffoldRun(req.body))));
-app.post("/deploy", asyncHandler(async (req, res) => res.json(await deploy(req.body))));
-app.get("/logs", asyncHandler(async (req, res) => res.json({ buildId: req.query.buildId, logs: await getBuildLogs(req.query) })));
-
-app.post("/task/:taskName", asyncHandler(async (req, res) => {
-  const { taskName } = req.params;
-  const taskFunction = taskRegistry[taskName];
-  if (!taskFunction) {
-    return res.status(404).json({ error: `Task '${taskName}' is not a valid task.` });
-  }
-  let config = {};
-  try {
-    const gcsPath = `configs/${taskName}.json`;
-    config = JSON.parse(await readFileText(gcsPath));
-    log(`[TaskRunner] Loaded config for '${taskName}' from GCS.`);
-  } catch (err) {
-    log(`[TaskRunner] No external config found for '${taskName}'.`);
-  }
-  const result = await taskFunction(config);
-  res.json({ success: true, ...result });
-}));
-
-app.post("/run/:scriptName", asyncHandler(async (req, res) => {
-  const { scriptName } = req.params;
-  const params = req.body || {};
-  let scriptCode = null;
-  try {
-    scriptCode = await readFileText(`scripts/${scriptName}.js`);
-    log(`[ScriptRunner] Script '${scriptName}' loaded from GCS.`);
-  } catch (gcsError) {
-    if (process.env.USE_FIRESTORE === 'true') {
-      const doc = await getDocument(`scripts/${scriptName}`);
-      if (doc && doc.code) {
-        scriptCode = doc.code;
-        log(`[ScriptRunner] Script '${scriptName}' loaded from Firestore.`);
-      }
-    }
-  }
-  if (!scriptCode) {
-    return res.status(404).json({ error: `Script '${scriptName}' not found.` });
-  }
-  const result = await executeInSandbox(scriptCode, params);
-  res.json(result);
-}));
-
-app.post("/admin/uploadConfig", asyncHandler(async (req, res) => {
-  const { name, config } = req.body;
-  await writeFileText(`configs/${name}.json`, JSON.stringify(config, null, 2));
-  res.json({ success: true, message: `Config for '${name}' saved to GCS.` });
-}));
-
-app.post("/admin/uploadScript", asyncHandler(async (req, res) => {
-  const { name, code } = req.body;
-  const gcsPath = `scripts/${name}.js`;
-  const firestorePath = `scripts/${name}`;
-  await Promise.all([
-    writeFileText(gcsPath, code),
-    setDocument(firestorePath, { code })
-  ]);
-  res.json({ success: true, message: `Script '${name}' synced to GCS and Firestore.` });
-}));
-
-app.get("/firestore/document", asyncHandler(async (req, res) => res.json(await getDocument(req.query.path))));
-app.post("/firestore/document", asyncHandler(async (req, res) => res.json(await setDocument(req.body.path, req.body.data))));
-app.delete("/firestore/document", asyncHandler(async (req, res) => res.json(await deleteDocument(req.query.path))));
-
-import { Firestore } from "@google-cloud/firestore";
-import { randomUUID } from "crypto";
-
-const db = new Firestore({ projectId: process.env.PROJECT_ID });
-const JOBS_COLLECTION = process.env.TASKS_COLLECTION || "primordia_jobs";
-
-// --- Workspace Endpoints ---
-
-app.post("/workspace", asyncHandler(async (req, res) => {
-  const blueprint = req.body;
-  if (!blueprint || !blueprint.type) {
-    return res.status(400).json({ error: "Request body must be a valid blueprint with a 'type'." });
-  }
-
-  const jobId = randomUUID();
-  const jobRef = db.collection(JOBS_COLLECTION).doc(jobId);
-
-  const jobData = {
-    jobId,
-    status: "PENDING",
-    receivedAt: new Date().toISOString(),
-    startedAt: null,
-    completedAt: null,
-    blueprint,
-    logs: [`[${new Date().toISOString()}] Job created.`],
-    outputs: {},
-  };
-
-  await jobRef.set(jobData);
-  await publishMessage("primordia-jobs", { jobId });
-
-  log(`[API] Created and dispatched job: ${jobId}`);
-  res.status(202).json({ jobId, message: "Job accepted and is being processed." });
-}));
-
-app.get("/workspace/status/:jobId", asyncHandler(async (req, res) => {
-    const { jobId } = req.params;
-    const jobRef = db.collection(JOBS_COLLECTION).doc(jobId);
-    const doc = await jobRef.get();
-
-    if (!doc.exists) {
-        return res.status(404).json({ error: "Job not found." });
-    }
-    res.json(doc.data());
-}));
-
+app.post("/workspace/proxy", asyncHandler(proxyHandler));
 
 app.use(async (err, req, res, next) => {
   log("ERROR:", err.message);
@@ -2523,6 +2688,101 @@ export default app;
 ## File: `./src/api/index.js.tmp`
 
 ```
+
+```
+
+---
+
+## File: `./src/api/proxy.js`
+
+```javascript
+import { URL } from "node:url";
+
+const MAX_MS   = parseInt(process.env.PROXY_MAX_MS || "8000", 10);
+const MAX_BYTES = parseInt(process.env.PROXY_MAX_BYTES || "1048576", 10); // 1MB
+const ALLOWLIST = (process.env.PROXY_ALLOWLIST || "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
+
+function assertAllowed(target) {
+  let u;
+  try { u = new URL(target); } catch { throw new Error("Invalid URL"); }
+  if (!/^https?:$/.test(u.protocol)) throw new Error("Only http/https allowed");
+  if (ALLOWLIST.length > 0) {
+    const origin = `${u.protocol}//${u.host}`;
+    if (!ALLOWLIST.includes(origin)) throw new Error(`Origin not allowed: ${origin}`);
+  }
+  return u.toString();
+}
+
+async function readCapped(res, cap) {
+  const ct = res.headers.get("content-type") || "";
+  const isText = /\b(text\/|application\/(json|xml|javascript|x-www-form-urlencoded))/i.test(ct);
+
+  if (isText) {
+    const text = await res.text();
+    const sliced = text.length > cap ? text.slice(0, cap) : text;
+    return { kind: ct.includes("json") ? "json-text" : "text", value: sliced };
+  } else {
+    const buf = Buffer.from(await res.arrayBuffer());
+    const trimmed = buf.length > cap ? buf.subarray(0, cap) : buf;
+    return { kind: "base64", value: trimmed.toString("base64") };
+  }
+}
+
+export async function proxyHandler(req, res) {
+  try {
+    const started = Date.now();
+    const { url, method = "GET", headers = {}, body = null } = req.body || {};
+    if (!url) return res.status(400).json({ ok: false, error: "Missing 'url'." });
+
+    const safeUrl = assertAllowed(url);
+    const cleanHeaders = Object.fromEntries(
+      Object.entries(headers || {}).filter(([k]) =>
+        !/^(connection|transfer-encoding|content-length|host)$/i.test(k)
+      )
+    );
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(new Error("timeout")), Math.min(MAX_MS, 60000));
+
+    let fetchBody = body;
+    if (fetchBody && typeof fetchBody === "object" && (/json/i.test(cleanHeaders["content-type"] || ""))) {
+      fetchBody = JSON.stringify(fetchBody);
+    }
+
+    const resp = await fetch(safeUrl, {
+      method,
+      headers: cleanHeaders,
+      body: ["GET","HEAD"].includes(method.toUpperCase()) ? undefined : fetchBody,
+      signal: controller.signal,
+      redirect: "follow",
+    }).catch((e) => { throw (e.name === "AbortError" ? new Error("Upstream timeout") : e); })
+      .finally(() => clearTimeout(timeout));
+
+    const bodyRead = await readCapped(resp, MAX_BYTES);
+    const durationMs = Date.now() - started;
+
+    const hdrs = {};
+    ["content-type","cache-control","date","etag","server","content-length","location"].forEach(h => {
+      const v = resp.headers.get(h);
+      if (v) hdrs[h] = v;
+    });
+
+    return res.status(200).json({
+      ok: true,
+      status: resp.status,
+      statusText: resp.statusText,
+      durationMs,
+      headers: hdrs,
+      body: bodyRead,
+      truncated: (hdrs["content-length"] ? parseInt(hdrs["content-length"],10) > MAX_BYTES : false)
+    });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+}
 
 ```
 
