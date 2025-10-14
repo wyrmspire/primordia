@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+API=${PRIMORDIA_API:-http://localhost:8080}
+JID=${1:-}
+[ -z "$JID" ] && { echo "usage: jobst <job-id>"; exit 1; }
+echo "polling $JID (Ctrl+C to stop)…"
+while true; do
+  curl -fsS "$API/workspace/status/$JID" | jq '{jobId,status,last:.logs[-1]}'
+  sleep 2
+done

@@ -1,6 +1,7 @@
 import { Firestore } from "@google-cloud/firestore";
 import { scaffoldFunction, scaffoldRun } from "../shared/scaffold.js";
 import { deploy } from "../shared/deploy.js";
+import { publishMessage } from "../shared/pubsub.js";
 import { PROJECT_ID } from "../shared/utils.js";
 
 const db = new Firestore({ projectId: PROJECT_ID });
@@ -41,7 +42,15 @@ async function executeDeployRun(jobId, blueprint) {
     const { name } = blueprint;
     if (!name) throw new Error("Blueprint is missing 'name' for deploy-run-service.");
     await logToJob(jobId, `Starting deployment for Cloud Run service: ${name}`);
-    return await deploy({ name, confirm: true, target: 'cloudrun' });
+    const res = await deploy({ name, confirm: true, target: 'cloudrun' });
+    if (process.env.PUBSUB_EMULATOR_HOST) {
+      try {
+        await publishMessage(process.env.LOCAL_EVENTS_TOPIC || "primordia-local-events", { type: "SERVICE_DEPLOYED", name });
+      } catch (e) {
+        console.log("[JobRunner] local event publish failed:", e?.message || e);
+      }
+    }
+    return res;
 }
 
 // --- Composite Functions ---

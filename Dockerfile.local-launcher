@@ -1,0 +1,12 @@
+FROM node:20-bookworm-slim
+
+# Lightweight + reliable: install a usable Docker CLI from Debian repos.
+# (We only need the CLI; we will mount the host's Docker socket.)
+RUN apt-get update -qq \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+      docker.io ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+# We'll bind-mount the repo in compose, so no COPY is required here.
+# Leave default user as root so /var/run/docker.sock is accessible.

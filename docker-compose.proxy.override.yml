@@ -1,0 +1,4 @@
+services:
+  primordia:
+    environment:
+      PROXY_ALLOWLIST: 'http://primordia-local-service-hot-swap-final:8080'

@@ -1,0 +1,57 @@
+services:
+  gcs:
+    image: fsouza/fake-gcs-server:latest
+    command: ["-scheme","http","-public-host","http://gcs:4443","-external-url","http://gcs:4443"]
+    ports: ["4443:4443"]
+
+  gcs-init:
+    image: curlimages/curl:latest
+    depends_on: [gcs]
+    env_file: [.env]
+    entrypoint: ["/bin/sh","-lc"]
+    command: >
+      'for i in $(seq 1 60); do
+         if curl -sS http://gcs:4443/ >/dev/null 2>&1; then break; fi;
+         echo "waiting for gcs..."; sleep 1;
+       done;
+       echo "creating bucket ${WORKSPACE_BUCKET}...";
+       curl -sS -X POST "http://gcs:4443/storage/v1/b?project=${PROJECT_ID:-localproj}" \
+         -H "content-type: application/json" \
+         -d "{\"name\":\"${WORKSPACE_BUCKET}\"}" >/dev/null 2>&1 || true;
+       echo "bucket ready."'
+
+  pubsub:
+    image: google/cloud-sdk:latest
+    command: ["/bin/sh","-lc","gcloud beta emulators pubsub start --host-port=0.0.0.0:8083"]
+    ports: ["8083:8083"]
+
+  firestore:
+    image: google/cloud-sdk:latest
+    command: ["/bin/sh","-lc","gcloud emulators firestore start --host-port=0.0.0.0:8085 --quiet"]
+    ports: ["8085:8085"]
+
+  primordia:
+    build: .
+    env_file: [.env]
+    environment:
+      - FIRESTORE_EMULATOR_HOST=firestore:8085
+      - PUBSUB_EMULATOR_HOST=pubsub:8083
+      - STORAGE_EMULATOR_HOST=http://gcs:4443
+    depends_on: [pubsub, firestore, gcs-init]
+    ports: ["8080:8080"]
+
+  local-launcher:
+    image: node:20-slim
+    working_dir: /work
+    volumes:
+      - .:/work
+      - /var/run/docker.sock:/var/run/docker.sock
+    env_file: [.env]
+    environment:
+      - PUBSUB_EMULATOR_HOST=pubsub:8083
+      - FIRESTORE_EMULATOR_HOST=firestore:8085
+      - STORAGE_EMULATOR_HOST=http://gcs:4443
+      - LOCAL_EVENTS_TOPIC=primordia-local-events
+      - LOCAL_EVENTS_SUB=primordia-local-launcher-sub
+    depends_on: [primordia]
+    command: ["node","local-launcher.js"]

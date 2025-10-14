@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+echo "Tailing logs (Ctrl+C to stop)…"
+( docker compose logs -f --tail=120 primordia & )
+( docker compose logs -f --tail=120 local-launcher )

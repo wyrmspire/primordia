@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+PID=${PROJECT_ID:-ticktalk-472521}
+docker compose exec pubsub bash -lc "
+  gcloud config set project $PID >/dev/null &&
+  gcloud pubsub topics create primordia-local-events >/dev/null 2>&1 || true &&
+  gcloud pubsub subscriptions create primordia-local-launcher-sub --topic primordia-local-events >/dev/null 2>&1 || true
+"
+echo "pub/sub local-events ready."

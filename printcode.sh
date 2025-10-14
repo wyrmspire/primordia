@@ -4,7 +4,7 @@ set -e
 # --- Configuration ---
 OUTPUT_FILE="primordia_code.md"
 EXCLUDE_DIRS=("./node_modules/*" "./.git/*" "./cache/*")
-EXCLUDE_FILES=("*.zip" "*.log" ".DS_Store" "package-lock.json" "$OUTPUT_FILE")
+EXCLUDE_FILES=("*.zip" "*.log" "*.bak" ".DS_Store" "package-lock.json" "$OUTPUT_FILE")
 
 # --- Script Start ---
 echo "🚀 Printing project source code to $OUTPUT_FILE..."

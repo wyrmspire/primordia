@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# install curl + docker cli inside the primordia container
+# handles Debian/Ubuntu (apt) or Alpine (apk)
+if docker compose exec primordia sh -lc 'command -v apt-get >/dev/null 2>&1'; then
+  docker compose exec primordia bash -lc 'apt-get update -qq && apt-get install -y -qq curl docker.io >/dev/null || apt-get install -y -qq curl docker-ce-cli >/dev/null'
+elif docker compose exec primordia sh -lc 'command -v apk >/dev/null 2>&1'; then
+  docker compose exec primordia sh -lc 'apk add --no-cache curl docker-cli'
+else
+  echo "unknown base image; please install curl + docker cli manually in primordia container" >&2
+  exit 1
+fi
+echo "primordia container now has curl + docker cli."

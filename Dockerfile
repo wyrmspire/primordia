@@ -14,6 +14,9 @@ RUN npm ci --omit=dev
 # Install pm2 globally within the container
 RUN npm install pm2 -g
 
+# This line has been removed:
+# COPY service-account-key.json ./
+
 COPY . .
 
 ENV NODE_ENV=production

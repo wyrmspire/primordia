@@ -216,3 +216,19 @@ download
 content_copy
 expand_less
 Your project is now **perfectly structured and documented** to be shared and deployed by anyone on their own Google Cloud project. Congratulations
+
+
+new permissions
+
+PROJECT_ID=$(gcloud config get-value project)
+PRIMORDIA_SA="primordia-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+
+echo "Granting Pub/Sub Publisher role to ${PRIMORDIA_SA}..."
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:${PRIMORDIA_SA}" \
+  --role="roles/pubsub.publisher"
+
+echo "Granting Pub/Sub Subscriber role to ${PRIMORDIA_SA}..."
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:${PRIMORDIA_SA}" \
+  --role="roles/pubsub.subscriber"

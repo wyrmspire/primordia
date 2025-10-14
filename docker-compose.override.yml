@@ -1,0 +1,29 @@
+services:
+  local-launcher:
+    build:
+      context: .
+      dockerfile: Dockerfile.local-launcher
+    image: primordia/local-launcher:cli
+    container_name: local-launcher
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./:/app:rw
+    working_dir: /app
+    environment:
+      # Project & emulators
+      PROJECT_ID: ticktalk-472521
+      PUBSUB_EMULATOR_HOST: pubsub:8083
+      STORAGE_EMULATOR_HOST: http://gcs:4443
+      DOCKER_NETWORK: primordia_default
+      WORKSPACE_BUCKET: primordia-bucket
+      # IMPORTANT: point to the topic Primordia actually publishes to
+      LOCAL_EVENTS_TOPIC: primordia-builds
+      LOCAL_LAUNCHER_SUB: primordia-local-launcher-sub
+    # USE THE REAL ENTRYPOINT FILE IN YOUR REPO
+    command: ["node","local-launcher.js"]
+    depends_on:
+      - pubsub
+      - gcs
+    networks:
+      - default

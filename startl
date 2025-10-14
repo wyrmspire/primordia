@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+echo "=== stopping old stack ==="
+docker compose down --remove-orphans || true
+
+echo "=== building primordia image (no cache) ==="
+docker compose build --no-cache primordia
+
+echo "=== starting stack ==="
+docker compose up -d
+
+echo "=== initializing local pub/sub ==="
+./enspub || true
+
+echo "=== waiting for Primordia API health ==="
+for i in {1..40}; do
+  if curl -fsS http://localhost:8080/healthz >/dev/null 2>&1; then
+    echo "HEALTHZ_OK"
+    break
+  fi
+  sleep 1
+  if [[ $i -eq 40 ]]; then
+    echo "ERROR: API did not become healthy in time"
+    docker compose logs primordia | tail -n 200
+    exit 1
+  fi
+done
+
+echo "=== stack status ==="
+docker compose ps
+
+echo
+echo "Tip: tail logs with:  ./taillg"

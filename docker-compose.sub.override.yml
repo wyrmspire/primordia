@@ -1,0 +1,6 @@
+services:
+  local-launcher:
+    environment:
+      LOCAL_LAUNCHER_SUB: primordia-local-launcher-sub-2
+      GOOGLE_CLOUD_PROJECT: ticktalk-472521
+      GCLOUD_PROJECT: ticktalk-472521
