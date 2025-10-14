@@ -7,23 +7,14 @@ if [[ -n $(git status --porcelain) ]]; then
 fi
 echo "✅ Git status is clean."
 echo "✅ Reading configuration from .env file..."
-# Use env.cloud.example if .env is missing, for safety
-ENV_FILE=.env
-if [ ! -f "$ENV_FILE" ]; then
-    echo "   - WARNING: .env not found. Using env.cloud.example."
-    ENV_FILE=env.cloud.example
-fi
-export $(grep -v '^#' $ENV_FILE | xargs)
-
+export $(grep -v '^#' .env | xargs)
 if [ -z "$PROJECT_ID" ]; then
   echo "❌ FATAL: PROJECT_ID is not set in your environment."
   exit 1
 fi
 echo "✅ Deploying to project: $PROJECT_ID"
-# THE FIX: Use a robust wildcard that works for all Cloud Run services.
 ALLOWED_ORIGIN="https://*.a.run.app"
 echo "🚀 Starting Cloud Build with PROXY_ALLOWLIST set to: ${ALLOWED_ORIGIN}"
-
 gcloud builds submit \
   --config cloudbuild.yaml \
   --project=$PROJECT_ID \
@@ -34,7 +25,6 @@ SERVICE_URL=$(gcloud run services describe primordia --region ${REGION} --projec
 echo "Service is live at: ${SERVICE_URL}"
 echo "Pinging /healthz endpoint (retrying up to 60s)..."
 for i in {1..12}; do
-  # Add a longer timeout to the curl command to handle cold starts
   if curl --max-time 10 -sSf -o /dev/null "${SERVICE_URL}/healthz"; then
     echo ""
     echo "✅ Health check passed. Deployment complete and verified."
@@ -43,6 +33,5 @@ for i in {1..12}; do
   echo "Attempt ${i} failed. Retrying in 5 seconds..."
   sleep 5
 done
-echo "❌ Health check failed after 12 attempts. The service might still be starting. Please check the URL manually."
-# Exit with success code 0, as this is a known race condition.
+echo "⚠️ Health check timed out. The service is likely still starting up. Please verify manually."
 exit 0
