@@ -9,14 +9,7 @@ const JOBS_COLLECTION = process.env.TASKS_COLLECTION || "primordia_jobs";
 if (!PROJECT_ID) { throw new Error("[Worker FATAL] PROJECT_ID env var is required"); }
 const pubsub = new PubSub({ projectId: PROJECT_ID });
 const db = new Firestore({ projectId: PROJECT_ID });
-
-async function fetchJob(jobId) {
-  const ref = db.collection(JOBS_COLLECTION).doc(jobId);
-  const snap = await ref.get();
-  if (!snap.exists) throw new Error(`Job ${jobId} not found`);
-  return { id: jobId, ...snap.data() };
-}
-
+async function fetchJob(jobId) { const ref = db.collection(JOBS_COLLECTION).doc(jobId); const snap = await ref.get(); if (!snap.exists) throw new Error(`Job ${jobId} not found`); return { id: jobId, ...snap.data() }; }
 export async function startWorker() {
   const { subscription } = await pubsub.topic(TOPIC_ID).subscription(SUBSCRIPTION_ID).get({ autoCreate: true }).then(d => ({ subscription: d[0] }));
   log(`[Worker] Listening for jobs on ${SUBSCRIPTION_ID}...`);
