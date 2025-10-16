@@ -22,10 +22,6 @@ function assertAllowed(target) {
   return u.toString();
 }
 
-async function readCapped(res, cap) { /* ... same as before ... */ }
-export async function proxyHandler(req, res) { /* ... same as before ... */ }
-
-// Full functions for completeness:
 async function readCapped(res, cap) {
   const ct = res.headers.get("content-type") || "";
   const isText = /\b(text\/|application\/(json|xml|javascript|x-www-form-urlencoded))/i.test(ct);
@@ -39,6 +35,7 @@ async function readCapped(res, cap) {
     return { kind: "base64", value: trimmed.toString("base64") };
   }
 }
+
 export async function proxyHandler(req, res) {
   try {
     const started = Date.now();
