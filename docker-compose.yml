@@ -51,7 +51,7 @@ services:
       - PUBSUB_EMULATOR_HOST=pubsub:8083
       - FIRESTORE_EMULATOR_HOST=firestore:8085
       - STORAGE_EMULATOR_HOST=http://gcs:4443
-      - LOCAL_EVENTS_TOPIC=primordia-local-events
-      - LOCAL_EVENTS_SUB=primordia-local-launcher-sub
+      - LOCAL_EVENTS_TOPIC=primordia-builds
+      - LOCAL_LAUNCHER_SUB=primordia-local-launcher-sub
     depends_on: [primordia]
     command: ["node","local-launcher.js"]

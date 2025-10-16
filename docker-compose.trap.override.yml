@@ -1,0 +1,5 @@
+services:
+  local-launcher:
+    # This command overrides "node local-launcher.js".
+    # The container will start and do nothing but sleep, keeping it alive for us.
+    command: ["sleep", "infinity"]

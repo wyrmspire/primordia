@@ -1,0 +1,3 @@
+# Force all text files to use LF (Linux) line endings on checkout.
+# This prevents cross-platform issues with shell scripts and code.
+* text=auto eol=lf

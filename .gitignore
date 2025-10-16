@@ -26,3 +26,10 @@ Thumbs.db
 *.bak
 cache/
 primordia_code.md
+# local backups / temp
+*.bak
+*.bak.*
+*.new
+*~
+# accidental file from a bad redirect
+{

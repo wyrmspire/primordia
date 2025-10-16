@@ -2,118 +2,100 @@ import { PubSub } from "@google-cloud/pubsub";
 import { spawnSync } from "node:child_process";
 import { Buffer } from "node:buffer";
 
-const TOPIC = process.env.LOCAL_EVENTS_TOPIC || "primordia-local-events";
-const SUBSCRIPTION = process.env.LOCAL_LAUNCHER_SUB || "primordia-local-launcher-sub";
-const PUBSUB_EMULATOR = process.env.PUBSUB_EMULATOR_HOST || "pubsub:8083";
-
-const NETWORK = process.env.DOCKER_NETWORK || "primordia_default";
-const PROJECT_ID = process.env.PROJECT_ID || "ticktalk-472521";
-const WORKSPACE_BUCKET = process.env.WORKSPACE_BUCKET || "primordia-bucket";
-const STORAGE_EMULATOR = process.env.STORAGE_EMULATOR_HOST || "http://gcs:4443";
+// ---- env ----
+const TOPIC            = process.env.LOCAL_EVENTS_TOPIC     || "primordia-builds";
+const SUB              = process.env.LOCAL_LAUNCHER_SUB     || "primordia-local-launcher-sub";
+const PROJECT_ID       = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT || process.env.PROJECT_ID || "ticktalk-472521";
+const PUBSUB_EMULATOR  = process.env.PUBSUB_EMULATOR_HOST   || "pubsub:8083";
+const NETWORK          = process.env.DOCKER_NETWORK         || "primordia_default";
+const WORKSPACE_BUCKET = process.env.WORKSPACE_BUCKET       || "primordia-bucket";
+const STORAGE          = process.env.STORAGE_EMULATOR_HOST  || "http://gcs:4443";
 
 function run(cmd, args, opts = {}) {
-  const res = spawnSync(cmd, args, { stdio: "pipe", encoding: "utf8", ...opts });
-  if (res.status !== 0) {
-    throw new Error(`${cmd} ${args.join(" ")} failed:\n${res.stderr || res.stdout || "(no output)"}`);
-  }
-  return res.stdout.trim();
+  const r = spawnSync(cmd, args, { stdio: "pipe", encoding: "utf8", ...opts });
+  if (r.status !== 0) throw new Error(`${cmd} ${args.join(" ")} failed:\n${r.stderr || r.stdout || ""}`);
+  return (r.stdout || "").trim();
 }
 
 function startService(name) {
-  const containerName = `primordia-local-service-${name}`;
-  // Remove any old container quietly
-  spawnSync("docker", ["rm", "-f", containerName], { stdio: "ignore" });
+  const container = `primordia-local-service-${name}`;
+  // cleanup any old container
+  spawnSync("docker", ["rm", "-f", container], { stdio: "ignore" });
 
-  const inlineScript = `
-set -euo pipefail
-apk add --no-cache nodejs-current npm >/dev/null 2>&1 || true
-mkdir -p /app && cd /app
-node -e '
-  const {Storage}=require("@google-cloud/storage");
-  (async()=>{
-    const s=new Storage({projectId:"${PROJECT_ID}", apiEndpoint:"${STORAGE_EMULATOR}"});
-    const b=s.bucket(process.env.WORKSPACE_BUCKET);
-    const files=["runs/${name}/index.js","runs/${name}/package.json","runs/${name}/handler.js"];
-    for (const p of files) {
-      try {
-        const [buf]=await b.file(p).download();
-        require("fs").writeFileSync(p.split("/").slice(-1)[0], buf);
-      } catch (e) {
-        if (p.endsWith("handler.js")) continue; // optional
-        console.error("download-failed", p, e.message);
-        process.exit(2);
-      }
-    }
-  })().then(()=>{
-    require("child_process").execSync("npm i --omit=dev", {stdio:"inherit"});
-    require("child_process").execSync("node index.js", {stdio:"inherit"});
-  }).catch(e=>{ console.error(e); process.exit(3); });
-'
-`;
+  // run a tiny bootstrap hosted in fake-GCS (installs curl, pulls files, runs node index.js)
+  const bootstrapURL = `${STORAGE.replace(/\/$/,'')}/storage/v1/b/${WORKSPACE_BUCKET}/o/runs%2F_bootstrap%2Fservice-bootstrap.sh?alt=media`;
+  const args = [
+    "run","-d",
+    "--name", container,
+    "--network", NETWORK,
+    "-e", `WORKSPACE_BUCKET=${WORKSPACE_BUCKET}`,
+    "-e", `STORAGE_EMULATOR_HOST=${STORAGE}`,
+    "-e", `SVC_NAME=${name}`,
+    "-e", `GCLOUD_PROJECT=${PROJECT_ID}`,
+    "-e", `GOOGLE_CLOUD_PROJECT=${PROJECT_ID}`,
+    "-p","0:8080",
+    "node:20-slim",
+    "sh","-lc",
+    `set -e; apt-get update -qq >/dev/null || true; apt-get install -y -qq ca-certificates curl >/dev/null 2>&1 || true; curl -sSf "${bootstrapURL}" | sh`
+  ];
+  const r = spawnSync("docker", args, { encoding: "utf8" });
+  if (r.status !== 0) throw new Error(`docker run failed:\n${r.stderr || r.stdout || ""}`);
 
-  // Encode the script to avoid any quoting issues
-  const b64 = Buffer.from(inlineScript, "utf8").toString("base64");
-
-  try {
-    run("docker", [
-      "run",
-      "-d",
-      "--rm",
-      "--name", containerName,
-      "--network", NETWORK,
-      "-e", `WORKSPACE_BUCKET=${WORKSPACE_BUCKET}`,
-      "-e", `STORAGE_EMULATOR_HOST=${STORAGE_EMULATOR}`,
-      "-e", `GCLOUD_PROJECT=${PROJECT_ID}`,
-      "-p", "0:8080",
-      "node:20-slim",
-      "sh", "-lc",
-      // decode to /tmp/start.sh and run it; base64 is available in busybox
-      `echo ${b64} | base64 -d > /tmp/start.sh && sh /tmp/start.sh`
-    ]);
-  } catch (e) {
-    // If docker run -p 0:8080 -p 0:8080 -p 0:8080 failed, dump any immediate logs from container name (in case it started then exited)
+  // robust port discovery (nil-safe)
+  let hostPort = "";
+  for (let i = 0; i < 40; i++) {
     try {
-      const logs = run("docker", ["logs", containerName]);
-      console.error("[local-launcher] container logs:\n", logs);
+      hostPort = run("docker", ["inspect","--format","{{with (index (index .NetworkSettings.Ports \"8080/tcp\") 0)}}{{.HostPort}}{{end}}", container]).replace(/\r/g,"");
+      if (!hostPort) {
+        const line = run("docker", ["port", container, "8080/tcp"]).split("\n").shift() || "";
+        hostPort = (line.split(":").pop() || "").trim();
+      }
+      if (hostPort) break;
     } catch {}
-    throw e;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
   }
-
-  const portLine = run("docker", ["port", containerName, "8080/tcp"]);
-  const hostPort = portLine.split(":").pop().trim();
-  console.log(`[local-launcher] STARTED ${name} on http://localhost:${hostPort} (container :8080)`);
+  if (!hostPort) throw new Error("service started but no published port found");
+  console.log(`[launcher] STARTED ${name} on http://localhost:${hostPort} (container :8080)`);
 }
 
 async function main() {
   process.env.PUBSUB_EMULATOR_HOST = PUBSUB_EMULATOR;
   const pubsub = new PubSub({ projectId: PROJECT_ID });
 
-  // Ensure topic/subscription exist (idempotent)
-  const [topics] = await pubsub.getTopics();
-  const hasTopic = topics.some((t) => t.name.endsWith(`/topics/${TOPIC}`));
-  if (!hasTopic) await pubsub.createTopic(TOPIC);
-  const topic = pubsub.topic(TOPIC);
-  const [subs] = await topic.getSubscriptions().catch(() => [[], null]);
-  const hasSub = Array.isArray(subs) && subs.some((s) => s.name.endsWith(`/subscriptions/${SUBSCRIPTION}`));
-  if (!hasSub) await topic.createSubscription(SUBSCRIPTION);
-  const sub = pubsub.subscription(SUBSCRIPTION);
+  try { await pubsub.topic(TOPIC).get({ autoCreate: true }); } catch {}
+  try { await pubsub.subscription(SUB).get({ autoCreate: true, topic: TOPIC }); } catch {}
 
-  console.log(`[local-launcher] listening on ${TOPIC} (${SUBSCRIPTION}) via ${PUBSUB_EMULATOR}...`);
+  const sub = pubsub.subscription(SUB);
+  console.log(`[launcher] listening on ${TOPIC} (${SUB}) via ${PUBSUB_EMULATOR}...`);
 
-  sub.on("message", (m) => {
+  sub.on("message", (msg) => {
     try {
-      const data = JSON.parse(m.data.toString("utf8"));
-      if (data && data.type === "SERVICE_DEPLOYED" && data.name) {
-        startService(data.name);
+      const raw = Buffer.from(msg.data||"").toString("utf8"); if(!raw.trim()){ msg.ack?.(); return; }
+      const data = raw ? JSON.parse(raw) : {};
+      const type = data.type || data.event || "";
+      const name = data.name || data.service || data.run || "";
+
+      if (!name) throw new Error("missing service name");
+      if (["SERVICE_DEPLOYED","DEPLOY_RUN_SERVICE","deploy-run-service"].includes(type)) {
+        // if already up, do nothing
+        const existing = spawnSync("docker", ["ps","-q","-f",`name=^/primordia-local-service-${name}$`], {encoding:"utf8"}).stdout.trim();
+        if (existing) { console.log(`[launcher] ${name} already running; ignoring`); }
+        else { console.log(`[launcher] deploy for '${name}'...`); startService(name); }
+      } else {
+        console.log("[launcher] ignoring message type:", type || "(none)");
       }
     } catch (e) {
-      console.error("[local-launcher] bad message:", e.message);
-    } finally {
-      m.ack();
-    }
+      console.error("[launcher] bad message:", (e && e.message) || e);
+    } finally { try { msg.ack(); } catch {} }
   });
 
-  sub.on("error", (e) => console.error("[local-launcher] subscription error:", e.message));
+  sub.on("error", (e) => {
+    console.error("[launcher] subscriber error:", (e && e.message) || e);
+    process.exit(1);
+  });
 }
 
-main().catch((e) => { console.error("[local-launcher] fatal:", e); process.exit(1); });
+main().catch((e) => {
+  console.error("[launcher] fatal:", (e && e.message) || e);
+  process.exit(1);
+});
