@@ -2,6 +2,7 @@ import { URL } from "node:url";
 const MAX_MS   = parseInt(process.env.PROXY_MAX_MS || "8000", 10);
 const MAX_BYTES = parseInt(process.env.PROXY_MAX_BYTES || "1048576", 10);
 const ALLOWLIST = (process.env.PROXY_ALLOWLIST || "").split(",").map(s => s.trim()).filter(Boolean);
+
 function assertAllowed(target) {
   let u;
   try { u = new URL(target); } catch { throw new Error("Invalid URL"); }
@@ -20,14 +21,33 @@ function assertAllowed(target) {
   }
   return u.toString();
 }
-async function readCapped(res, cap) { const ct = res.headers.get("content-type") || ""; const isText = /\b(text\/|application\/(json|xml|javascript|x-www-form-urlencoded))/i.test(ct); if (isText) { const text = await res.text(); const sliced = text.length > cap ? text.slice(0, cap) : text; return { kind: ct.includes("json") ? "json-text" : "text", value: sliced }; } else { const buf = Buffer.from(await res.arrayBuffer()); const trimmed = buf.length > cap ? buf.subarray(0, cap) : buf; return { kind: "base64", value: trimmed.toString("base64") }; } }
+
+async function readCapped(res, cap) { /* ... same as before ... */ }
+export async function proxyHandler(req, res) { /* ... same as before ... */ }
+
+// Full functions for completeness:
+async function readCapped(res, cap) {
+  const ct = res.headers.get("content-type") || "";
+  const isText = /\b(text\/|application\/(json|xml|javascript|x-www-form-urlencoded))/i.test(ct);
+  if (isText) {
+    const text = await res.text();
+    const sliced = text.length > cap ? text.slice(0, cap) : text;
+    return { kind: ct.includes("json") ? "json-text" : "text", value: sliced };
+  } else {
+    const buf = Buffer.from(await res.arrayBuffer());
+    const trimmed = buf.length > cap ? buf.subarray(0, cap) : buf;
+    return { kind: "base64", value: trimmed.toString("base64") };
+  }
+}
 export async function proxyHandler(req, res) {
   try {
     const started = Date.now();
     const { url, method = "GET", headers = {}, body = null } = req.body || {};
     if (!url) return res.status(400).json({ ok: false, error: "Missing 'url'." });
     const safeUrl = assertAllowed(url);
-    const cleanHeaders = Object.fromEntries(Object.entries(headers || {}).filter(([k]) => !/^(connection|transfer-encoding|content-length|host)$/i.test(k)));
+    const cleanHeaders = Object.fromEntries(
+      Object.entries(headers || {}).filter(([k]) => !/^(connection|transfer-encoding|content-length|host)$/i.test(k))
+    );
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(new Error("timeout")), Math.min(MAX_MS, 60000));
     let fetchBody = body;
