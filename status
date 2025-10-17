@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+echo "[status] containers"
+docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' \
+ | sed -e '1p;/primordia-primordia-1/!d;/primordia-pubsub-1/!d;/primordia-gcs-1/!d;/primordia-gcs-init-1/!d;/local-launcher/!d;/primordia-firestore/!d'
+echo
+echo "[status] primordia /healthz"
+curl -fsS http://localhost:8080/healthz || echo "(not ready yet)"

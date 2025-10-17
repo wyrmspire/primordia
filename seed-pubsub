@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# source .env so it works standalone
+set -a; [ -f .env ] && . ./.env; set +a
+: "${PROJECT_ID:?set PROJECT_ID in .env or env}"
+: "${PUBSUB_TOPIC:?set PUBSUB_TOPIC in .env or env}"
+: "${PUBSUB_SUB:?set PUBSUB_SUB in .env or env}"
+LAUNCHER_SUB="primordia-local-launcher-sub"
+BASE="http://localhost:8083/v1/projects/$PROJECT_ID"
+
+echo "[ps] seeding topic + subs"
+curl -s -X PUT "$BASE/topics/$PUBSUB_TOPIC" >/dev/null || true
+curl -s -X PUT "$BASE/subscriptions/$PUBSUB_SUB" \
+  -H 'content-type: application/json' \
+  -d "{\"topic\":\"projects/$PROJECT_ID/topics/$PUBSUB_TOPIC\"}" >/dev/null || true
+curl -s -X PUT "$BASE/subscriptions/$LAUNCHER_SUB" \
+  -H 'content-type: application/json' \
+  -d "{\"topic\":\"projects/$PROJECT_ID/topics/$PUBSUB_TOPIC\"}" >/dev/null || true
+echo "[ps] done"

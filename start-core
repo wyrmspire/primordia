@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+echo "[core] bringing up primordia, pubsub, gcs"
+docker compose up -d --no-deps gcs pubsub gcs-init primordia local-launcher

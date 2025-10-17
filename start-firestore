@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# pick up PROJECT_ID from .env if present
+set -a; [ -f .env ] && . ./.env; set +a
+PROJECT_ID="${PROJECT_ID:-ticktalk-472521}"
+NET="primordia_default"
+
+echo "[fs] removing old firestore container (if any)"
+docker rm -f primordia-firestore primordia-firestore-1 >/dev/null 2>&1 || true
+
+echo "[fs] starting firestore emulator (internal-only)"
+docker run -d --name primordia-firestore \
+  --network "$NET" --network-alias firestore \
+  gcr.io/google.com/cloudsdktool/cloud-sdk:latest \
+  bash -lc 'set -e; apt-get update -qq >/dev/null; \
+    apt-get install -y -qq temurin-21-jre google-cloud-cli-firestore-emulator >/dev/null; \
+    exec gcloud beta emulators firestore start --host-port=0.0.0.0:8085 --project='"$PROJECT_ID"''
+
+echo "[fs] tip: watch logs with:  ./logs-firestore"

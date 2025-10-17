@@ -1,52 +1,18 @@
 #!/usr/bin/env bash
+# one-button chain runner; no tests/smoke — just bring it up
 set -euo pipefail
+echo "[startl] core"
+./start-core
 
-cd "$(dirname "$0")"
+echo "[startl] firestore"
+./start-firestore
 
-echo "--- [1/5] Stopping and cleaning old containers ---"
-# Use your existing override file to ensure all services are targeted
-docker compose -f docker-compose.yml -f docker-compose.override.yml down --remove-orphans 2>/dev/null || true
-docker rm -f primordia-firestore 2>/dev/null || true
-echo "✅ Done."
+echo "[startl] pubsub seed"
+./seed-pubsub || true
 
-echo -e "\n--- [2/5] Creating Docker network and services (without starting) ---"
-# This pre-creates the network so the Firestore container can join it
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.override.yml \
-  up --no-start --build
-echo "✅ Network 'primordia_default' is ready."
+echo "[startl] brief wait (firestore warm-up)"
+sleep 3
 
-echo -e "\n--- [3/5] Starting standalone Firestore emulator (with Java 21) ---"
-docker run -d --name primordia-firestore \
-  --network primordia_default \
-  --network-alias firestore \
-  -p 8085:8085 \
-  gcr.io/google.com/cloudsdktool/cloud-sdk:latest \
-  bash -lc 'set -e; apt-get update -qq &>/dev/null; apt-get install -y -qq wget gnupg ca-certificates &>/dev/null; install -d -m 0755 /etc/apt/keyrings; wget -qO- https://packages.adoptium.net/artifactory/api/gpg/key/public | gpg --dearmor -o /etc/apt/keyrings/adoptium.gpg; . /etc/os-release; echo "deb [signed-by=/etc/apt/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb $${VERSION_CODENAME} main" > /etc/apt/sources.list.d/adoptium.list; apt-get update -qq &>/dev/null; apt-get install -y -qq temurin-21-jre google-cloud-cli-firestore-emulator &>/dev/null; echo "Firestore Emulator is starting..."; exec gcloud beta emulators firestore start --host-port=0.0.0.0:8085 --project=ticktalk-472521'
-sleep 2 # Give it a moment to initialize
-echo "✅ Firestore emulator started."
-
-echo -e "\n--- [4/5] Starting Primordia stack ---"
-# This starts the services defined across both files
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.override.yml \
-  up -d
-echo "✅ Primordia, GCS, Pub/Sub, and the fixed local-launcher are starting."
-
-echo -e "\n--- [5/5] Waiting for Primordia API to become healthy ---"
-for i in {1..20}; do
-  if curl -fsS http://localhost:8080/healthz >/dev/null 2>&1; then
-    echo "✅ Primordia is healthy and ready!"
-    docker compose ps
-    echo -e "\nTip: Tail logs with: docker compose logs -f"
-    exit 0
-  fi
-  echo -n "."
-  sleep 1
-done
-
-echo -e "\n❌ ERROR: Primordia API did not become healthy in time."
-docker compose logs primordia | tail -n 50
-exit 1
+echo "[startl] status"
+./status || true
+echo "[startl] done"

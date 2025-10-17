@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+set +H  # disable history expansion so '!' in JSON doesn't error
+
+RUN_NAME="${RUN_NAME:-hot-swap-final}"
+PROJECT_ID="${PROJECT_ID:-ticktalk-472521}"
+TOPIC="${PUBSUB_TOPIC:-primordia-builds}"
+PUBSUB_BASE="http://localhost:8083/v1/projects/$PROJECT_ID"
+
+b64() { printf "%s" "$1" | base64 -w0 2>/dev/null || printf "%s" "$1" | base64 -b0; }
+
+echo "[health] /healthz"
+curl -fsS http://localhost:8080/healthz && echo
+
+echo "[seed] files for ${RUN_NAME}"
+curl -sS -X POST http://localhost:8080/file -H 'content-type: application/json' -d @- <<'JSON'
+{"path":"runs/hot-swap-final/package.json","content":"{\"name\":\"primordia-hot-swap-final\",\"type\":\"module\",\"dependencies\":{}}"}
+JSON
+curl -sS -X POST http://localhost:8080/file -H 'content-type: application/json' -d @- <<'JSON'
+{"path":"runs/hot-swap-final/index.js","content":"import http from 'http';const s=http.createServer(async(req,res)=>{if(req.url.startsWith('/hello')){const q=Date.now();const {default:handler}=await import(`./handler.js?ts=${q}`);return handler(req,res);}res.statusCode=404;res.end('Not Found');});s.listen(8080,()=>console.log('service listening :8080'));"} 
+JSON
+curl -sS -X POST http://localhost:8080/file -H 'content-type: application/json' -d @- <<'JSON'
+{"path":"runs/hot-swap-final/handler.js","content":"export default (req,res)=>{res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({ok:true,message:'v1 from handler',t:new Date().toISOString()}));};"}
+JSON
+echo
+
+echo "[pubsub] publish SERVICE_DEPLOYED"
+MSG=$(b64 "{\"type\":\"SERVICE_DEPLOYED\",\"name\":\"$RUN_NAME\"}")
+curl -s -H "Content-Type: application/json" \
+  -d "{\"messages\":[{\"data\":\"$MSG\"}]}" \
+  "$PUBSUB_BASE/topics/$TOPIC:publish"
+echo; echo
+
+echo "[discover] container port"
+PORT=""
+for i in {1..30}; do
+  PORT=$(docker port "primordia-local-service-$RUN_NAME" 8080/tcp 2>/dev/null | sed 's/.*://')
+  [ -n "$PORT" ] && break
+  sleep 0.3
+done
+echo "SERVICE_URL=http://127.0.0.1:$PORT"
+
+if [ -n "${PORT:-}" ]; then
+  echo "[direct] GET /hello"
+  curl -sS "http://127.0.0.1:$PORT/hello" || true
+  echo
+else
+  echo "(!) service port not found yet; skipping direct call"
+fi
+echo
+
+echo "[proxy] GET /hello"
+curl -sS -X POST http://localhost:8080/workspace/proxy \
+  -H 'content-type: application/json' \
+  -d "{\"url\":\"http://primordia-local-service-$RUN_NAME:8080/hello\",\"method\":\"GET\"}"
+echo; echo
+
+echo "[hotswap] handler -> v2"
+curl -sS -X POST http://localhost:8080/file -H 'content-type: application/json' -d @- <<'JSON'
+{"path":"runs/hot-swap-final/handler.js","content":"export default (req,res)=>{res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({ok:true,message:'v2 LIVE swap',t:new Date().toISOString()}));};"}
+JSON
+
+echo "[proxy] GET /hello (after swap)"
+curl -sS -X POST http://localhost:8080/workspace/proxy \
+  -H 'content-type: application/json' \
+  -d "{\"url\":\"http://primordia-local-service-$RUN_NAME:8080/hello\",\"method\":\"GET\"}"
+echo
