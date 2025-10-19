@@ -1,3 +1,6 @@
+#!/usr/bin/env bash
+echo "--> Applying the final fix to docker-compose.override.yml..."
+cat > docker-compose.override.yml <<'YAML'
 services:
   primordia:
     volumes:
@@ -32,3 +35,5 @@ services:
       - gcs
     networks:
       - default
+YAML
+echo "--> docker-compose.override.yml has been fixed."

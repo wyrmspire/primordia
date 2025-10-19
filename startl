@@ -1,18 +1,42 @@
 #!/usr/bin/env bash
-# one-button chain runner; no tests/smoke — just bring it up
 set -euo pipefail
-echo "[startl] core"
+
+echo "[startl] Starting core services..."
 ./start-core
 
-echo "[startl] firestore"
+echo "[startl] Starting Firestore emulator..."
 ./start-firestore
 
-echo "[startl] pubsub seed"
+# --- NEW: Robust readiness checks ---
+echo "[startl] Waiting for Primordia API to become healthy (max 30s)..."
+for i in {1..60}; do
+  if curl -fsS http://localhost:8080/healthz >/dev/null 2>&1; then
+    echo "[startl] --> Primordia API is ready."
+    break
+  fi
+  sleep 0.5
+  if [ "$i" -eq 60 ]; then
+    echo "[startl] --> ERROR: Primordia API did not become healthy in time." >&2
+    exit 1
+  fi
+done
+
+echo "[startl] Waiting for Firestore to accept connections (max 30s)..."
+for i in {1..60}; do
+  # We use MSYS_NO_PATHCONV=1 to ensure the path is not converted by Git Bash
+  if MSYS_NO_PATHCONV=1 docker compose exec primordia bash -lc '(echo >/dev/tcp/firestore/8085) 2>/dev/null'; then
+    echo "[startl] --> Firestore is ready."
+    break
+  fi
+  sleep 0.5
+  if [ "$i" -eq 60 ]; then
+    echo "[startl] --> ERROR: Firestore did not become ready in time." >&2
+    exit 1
+  fi
+done
+
+echo "[startl] Seeding Pub/Sub..."
 ./seed-pubsub || true
 
-echo "[startl] brief wait (firestore warm-up)"
-sleep 3
-
-echo "[startl] status"
+echo "[startl] System is ready."
 ./status || true
-echo "[startl] done"

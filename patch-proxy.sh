@@ -1,3 +1,6 @@
+#!/usr/bin/env bash
+echo "--> Applying patch to src/api/proxy.js..."
+cat > src/api/proxy.js <<'JS'
 import { URL } from "node:url";
 const MAX_MS   = parseInt(process.env.PROXY_MAX_MS || "8000", 10);
 const MAX_BYTES = parseInt(process.env.PROXY_MAX_BYTES || "1048576", 10);
@@ -66,3 +69,5 @@ export async function proxyHandler(req, res) {
     return res.status(400).json({ ok: false, error: err?.message || String(err) });
   }
 }
+JS
+echo "--> Patch applied successfully."

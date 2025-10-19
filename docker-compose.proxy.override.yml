@@ -1,4 +1,0 @@
-services:
-  primordia:
-    environment:
-      PROXY_ALLOWLIST: "http://primordia-local-service-pls-*"

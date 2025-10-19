@@ -2,18 +2,37 @@
 set -euo pipefail
 # pick up PROJECT_ID from .env if present
 set -a; [ -f .env ] && . ./.env; set +a
-PROJECT_ID="${PROJECT_ID:-ticktalk-472521}"
+PROJECT_ID="${PROJECT_ID:-ticktalk-42521}"
 NET="primordia_default"
 
 echo "[fs] removing old firestore container (if any)"
-docker rm -f primordia-firestore primordia-firestore-1 >/dev/null 2>&1 || true
+docker rm -f primordia-firestore >/dev/null 2>&1 || true
 
-echo "[fs] starting firestore emulator (internal-only)"
+echo "[fs] starting firestore emulator (with Java 21 install)"
+# THE FIX: This command includes the steps to add the Adoptium repository
+# so that 'apt-get install temurin-21-jre' can succeed.
 docker run -d --name primordia-firestore \
   --network "$NET" --network-alias firestore \
+  -p 8085:8085 \
   gcr.io/google.com/cloudsdktool/cloud-sdk:latest \
-  bash -lc 'set -e; apt-get update -qq >/dev/null; \
+  bash -lc 'set -e; \
+    echo "--> Installing prerequisites..."; \
+    apt-get update -qq; \
+    apt-get install -y -qq wget gnupg ca-certificates >/dev/null; \
+    \
+    echo "--> Adding Adoptium repository GPG key..."; \
+    install -d -m 0755 /etc/apt/keyrings; \
+    wget -qO- https://packages.adoptium.net/artifactory/api/gpg/key/public | gpg --dearmor -o /etc/apt/keyrings/adoptium.gpg; \
+    \
+    echo "--> Adding Adoptium repository to sources..."; \
+    . /etc/os-release; \
+    echo "deb [signed-by=/etc/apt/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb ${VERSION_CODENAME} main" > /etc/apt/sources.list.d/adoptium.list; \
+    \
+    echo "--> Updating package list and installing..."; \
+    apt-get update -qq; \
     apt-get install -y -qq temurin-21-jre google-cloud-cli-firestore-emulator >/dev/null; \
+    \
+    echo "--> Starting Firestore emulator..."; \
     exec gcloud beta emulators firestore start --host-port=0.0.0.0:8085 --project='"$PROJECT_ID"''
 
 echo "[fs] tip: watch logs with:  ./logs-firestore"

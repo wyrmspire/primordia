@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
-echo "[stop] compose down"
+
+echo "[stop] Finding and removing all dynamically launched services..."
+# This finds any container with "primordia-local-service-" in its name and removes it.
+docker ps -aq --filter "name=primordia-local-service-" | xargs -r docker rm -f
+
+echo "[stop] Stopping core services with docker-compose..."
 docker compose down --remove-orphans || true
-echo "[stop] firestore container"
-docker rm -f primordia-firestore primordia-firestore-1 || true
-echo "í»‘ stopped"
+
+echo "[stop] Removing standalone firestore container..."
+docker rm -f primordia-firestore || true
+
+echo "âœ… System stopped and cleaned."
